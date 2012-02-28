@@ -32,7 +32,7 @@ int ROCID, boardID;
 int const max_tdc_rows = 200;
 int tdcCodaID[200], tdcRunID[200], tdcSpillID[200];
 int tdcROC[200], tdcBoardID[200], tdcChannelID[200];
-double tdcStopTime[200], tdcVmeTime[200], tdcSignalWidth[200];
+int tdcStopTime[200], tdcVmeTime[200], tdcSignalWidth[200];
 int tdcCount;
 char errString[1028];
 
@@ -40,7 +40,7 @@ char errString[1028];
 int const max_v1495_rows = 200;
 int v1495RocID[200], v1495CodaID[200], v1495RunID[200], v1495SpillID[200];
 int v1495ROC[200], v1495BoardID[200], v1495ChannelID[200];
-double v1495StopTime[200], v1495VmeTime[200];
+int v1495StopTime[200], v1495VmeTime[200];
 int v1495Count;
 
 // New TDC Values
@@ -76,9 +76,13 @@ int force;
 MYSQL_STMT *runStmt;
 MYSQL_STMT *spillStmt;
 MYSQL_STMT *codaEvStmt;
+MYSQL_STMT *hitStmt;
+MYSQL_STMT *v1495Stmt;
 MYSQL_BIND runBind[3];
 MYSQL_BIND spillBind[6];
 MYSQL_BIND codaEvBind[6];
+MYSQL_BIND hitBind[1800];
+MYSQL_BIND v1495Bind[1600];
 char *server;
 char *user;
 char *password;

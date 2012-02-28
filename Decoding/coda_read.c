@@ -5,8 +5,6 @@
 //
 //	Creator: Bryan Dannowitz
 //
-//	Last Update: 19 November 2011
-//
 //	Current Decoding Capabilities:
 //	=============================
 //	- Prestart, Go Event, and End Event CODA Events
@@ -23,7 +21,7 @@
 //	=============================
 //	Syntax:
 //	decode -f fileName -m {1: online, 0: offline} -h SQLhostName
-//	-u userName -p password -d schemaOutput -s samplingNumber
+//	-u userName -p password -d schemaOutput
 //
 //	For decoding a file while its still being written:
 //
@@ -34,36 +32,7 @@
 //	./decode -f /full/path/and/filename.dat -m 0 -h host -u user 
 //		 -p password -d test_output
 //
-//	Revision History:
-//	=================
-//	Revision 1.0 - 2011/05/18 13:45 - Bryan Dannowitz
-//	    - Initial revision
-//	    - Different types of Physics Events allowed within one CODA Event
-//	    - Added vmeTime to submitted TDC data
-//	    - Combined TDC and Latch data to single Hit table
-//	Revision 1.1 - 2011/06/02 18:11 - Bryan Dannowitz
-//	    - Fixed and enabled Start of Run Descriptor.  Now found in Run table.
-//	    - Fixed issued that arose with merging Latch and Hit tables
-//	Revision 1.2 - 2011/06/30 13:25 - Bryan Dannowitz
-//	    - Fixed the "retry" function to eat less CPU
-//	    - Fixed, again, the Start of Run Descriptor.
-//	    - Changed "get_hex_bits" to a bitwise operation, much faster
-//	    - Add exception to physics events, keeping rocEvent words less 
-//	      than codaEvent words.  This prevents possible seg faults.
-//	Revision 1.3 - 2011/07/15 18:23 - Bryan Dannowitz
-//	    - Implemented a comprehensive flag structure for type-1 physics events.
-//	      0 - ignore, 1 - latch, 2 - Old TDC, 3 - scaler
-//	    - Added scaler type events
-//	Revision 1.4 - 2011/11/19 18:47 - Bryan Dannowitz
-//	    - v1495 TDC type has been added, inserts into TriggerHit
-//	    - Flags modified: before each board in each ROC is a flag 0xe906f00x
-//	      where x:  0 - Ignore, 1 - Latch, 2 - Old TDC, 3 - Scalar, 
-//			4 - Non-Zero Suppressed TDC, 5 - v1495 TDC
-//	    - RocEvents have been done away with, as they meant nothing, 
-//	      along with RocEventID's in other tables
-//	    - HV Table added. HV trigger may have to be added
-//	    - Removed many old manual benchmarking
-//
+
 //
 //==========================================================================//
 /////////////////////////////////////////////////////////////////////////// */
@@ -121,7 +90,7 @@ int main(int argc,char* argv[]){
 
   // Must set this option for the C API to allow loading data from
   // 	local file (like we do for slow control events)
-  mysql_options(conn, MYSQL_OPT_LOCAL_INFILE, "");
+  mysql_options(conn, MYSQL_OPT_LOCAL_INFILE, NULL);
 
   // Connect to the MySQL database
   if (!mysql_real_connect(conn, server, user, password, database, 
@@ -137,6 +106,7 @@ int main(int argc,char* argv[]){
 	printf("SQL Table Creation ERROR\n");
 	exit(1);
   }
+
 
   // Initialize event array
   for(i=0;i<1000;i++){
@@ -183,6 +153,7 @@ int main(int argc,char* argv[]){
   cpuStart = clock();
   timeStart = time(NULL);
   // Read the first event
+  spillID = 0;
   status = read_coda_file(physicsEvent,100000);
   eventIdentifier = physicsEvent[1];
 
@@ -213,6 +184,8 @@ int main(int argc,char* argv[]){
 	    mysql_stmt_close(runStmt);
 	    mysql_stmt_close(spillStmt);	
 	    mysql_stmt_close(codaEvStmt);
+	    mysql_stmt_close(hitStmt);	
+	    mysql_stmt_close(v1495Stmt);
 	    mysql_close(conn);
 	    close_coda_file();
 
@@ -332,6 +305,8 @@ int main(int argc,char* argv[]){
    mysql_stmt_close(runStmt);
    mysql_stmt_close(spillStmt);
    mysql_stmt_close(codaEvStmt);
+   mysql_stmt_close(hitStmt);
+   mysql_stmt_close(v1495Stmt);
    mysql_close(conn);
    close_coda_file();
 
@@ -339,8 +314,6 @@ int main(int argc,char* argv[]){
    timeEnd = time(NULL);
 
    cpuTotal = (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
-
-   //printf("Case 1: %i\nCase 2: %i\nCase 3: %i\nCase 4: %i\nCase 5: %i\nCase 6: %i\n\n",case1,case2,case3,case4,case5,case6);
 
    printf("CPU Time: %fs\n", cpuTotal);
    printf("Real Time: %f\n", (timeEnd - timeStart));
@@ -516,20 +489,37 @@ int createSQL(MYSQL *conn, char *schema){
 
 	char qryString[10000];
 	int i;
+	int k;
 
 	char runInsert[1000];
 	char codaEvInsert[1000];
 	char spillInsert[1000];
+	char v1495Insert[100000];
+	char hitInsert[100000];
 
 	sprintf(runInsert, "INSERT INTO Run (runID, runType, runTime) VALUES (?,?,?)");
 	sprintf(spillInsert,"INSERT INTO Spill (spillID, runID, eventID, "
 		"spillType, rocID, vmeTime) VALUES (?,?,?,?,?,?)");
 	sprintf(codaEvInsert,"INSERT INTO Event (eventID, runID, spillID, "
 		"eventType, triggerBits, dataQuality) VALUES (?,?,?,?,?,?)");
+	sprintf(hitInsert,"INSERT INTO tempTDC (runID, spillID, eventID, rocID,"
+		"boardID, channelID, tdcTime, signalWidth, vmeTime) "
+		"VALUES (?,?,?,?,?,?,?,?,?)");
+	for(i=1;i<200;i++){
+		sprintf(hitInsert,"%s, (?,?,?,?,?,?,?,?,?)",hitInsert);
+	}
+	sprintf(v1495Insert,"INSERT INTO tempv1495 (runID, spillID, eventID, rocID,"
+		"boardID, channelID, tdcTime, vmeTime) "
+		"VALUES (?,?,?,?,?,?,?,?)");
+	for(i=1;i<200;i++){
+		sprintf(v1495Insert,"%s, (?,?,?,?,?,?,?,?)",v1495Insert);
+	}
 
 	memset(runBind, 0, sizeof(runBind));
 	memset(spillBind, 0, sizeof(spillBind));
 	memset(codaEvBind, 0, sizeof(codaEvBind));
+	memset(hitBind, 0, sizeof(hitBind));
+	memset(v1495Bind, 0, sizeof(v1495Bind));
 
 	for (i=0;i<3;i++) runBind[i].buffer_type= MYSQL_TYPE_LONG;
 	runBind[0].buffer= (char *)&runNum;
@@ -557,6 +547,35 @@ int createSQL(MYSQL *conn, char *schema){
 	codaEvBind[5].buffer= (char *)&dataQuality;
 	for (i=0;i<6;i++) codaEvBind[i].is_null= 0;
 	for (i=0;i<6;i++) codaEvBind[i].length= 0;
+
+	for(k=0;k<200;k++){
+		for (i=0;i<9;i++) hitBind[(k*9+i)].buffer_type= MYSQL_TYPE_LONG;
+		hitBind[(k*9+0)].buffer= (char *)&tdcRunID[k];
+		hitBind[(k*9+1)].buffer= (char *)&tdcSpillID[k];
+		hitBind[(k*9+2)].buffer= (char *)&tdcCodaID[k];
+		hitBind[(k*9+3)].buffer= (char *)&tdcROC[k];
+		hitBind[(k*9+4)].buffer= (char *)&tdcBoardID[k];
+		hitBind[(k*9+5)].buffer= (char *)&tdcChannelID[k];
+		hitBind[(k*9+6)].buffer= (char *)&tdcStopTime[k];
+		hitBind[(k*9+7)].buffer= (char *)&tdcSignalWidth[k];
+		hitBind[(k*9+8)].buffer= (char *)&tdcVmeTime[k];
+		for (i=0;i<9;i++) hitBind[(k*9+i)].is_null= 0;
+		for (i=0;i<9;i++) hitBind[(k*9+i)].length= 0;
+	}
+
+	for(k=0;k<200;k++){
+		for (i=0;i<8;i++) v1495Bind[(k*9+i)].buffer_type= MYSQL_TYPE_LONG;
+		v1495Bind[(k*8+0)].buffer= (char *)&v1495RunID[k];
+		v1495Bind[(k*8+1)].buffer= (char *)&v1495SpillID[k];
+		v1495Bind[(k*8+2)].buffer= (char *)&v1495CodaID[k];
+		v1495Bind[(k*8+3)].buffer= (char *)&v1495ROC[k];
+		v1495Bind[(k*8+4)].buffer= (char *)&v1495BoardID[k];
+		v1495Bind[(k*8+5)].buffer= (char *)&v1495ChannelID[k];
+		v1495Bind[(k*8+6)].buffer= (char *)&v1495StopTime[k];
+		v1495Bind[(k*8+7)].buffer= (char *)&v1495VmeTime[k];
+		for (i=0;i<8;i++) v1495Bind[(k*8+i)].is_null= 0;
+		for (i=0;i<8;i++) v1495Bind[(k*8+i)].length= 0;
+	}
 
 	sprintf(qryString, "CREATE DATABASE IF NOT EXISTS %s", schema);
 	
@@ -607,8 +626,8 @@ int createSQL(MYSQL *conn, char *schema){
 		"`channelID` TINYINT UNSIGNED NOT NULL, `detectorID` INT, "
 		"`detectorName` CHAR(6), "
 		"`elementID` INT UNSIGNED, `tdcTime` DOUBLE, `driftDistance` DOUBLE, `signalWidth` DOUBLE, "
-		"`vmeTime` DOUBLE, INDEX USING BTREE (eventID), "
-		"INDEX USING BTREE(detectorName), INDEX USING BTREE (elementID))") )
+		"`vmeTime` DOUBLE)") ) //, INDEX USING BTREE (eventID), "
+		// "INDEX USING BTREE(detectorName), INDEX USING BTREE (elementID))") )
 	{
 		printf("Hit Table Creation Error: %s\n", mysql_error(conn));
 		return 1;
@@ -622,8 +641,8 @@ int createSQL(MYSQL *conn, char *schema){
 		"`channelID` TINYINT UNSIGNED NOT NULL, `detectorID` INT, "
 		"`detectorName` CHAR(6), "
 		"`elementID` INT UNSIGNED, `tdcTime` DOUBLE, "
-		"`vmeTime` DOUBLE, INDEX USING BTREE (eventID), "
-		"INDEX USING BTREE(detectorName), INDEX USING BTREE (elementID))") )
+		"`vmeTime` DOUBLE)") ) //, INDEX USING BTREE (eventID), "
+		// "INDEX USING BTREE(detectorName), INDEX USING BTREE (elementID))") )
 	{
 		printf("TriggerHit Table Creation Error: %s\n", mysql_error(conn));
 		return 1;
@@ -635,9 +654,9 @@ int createSQL(MYSQL *conn, char *schema){
 		"`rocID` TINYINT UNSIGNED NOT NULL, `boardID` INT, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, `value` INT NOT NULL, "
 		"`detectorID` INT, `detectorName` CHAR(6), `elementID` INT UNSIGNED, "
-		"`vmeTime` INT NOT NULL, "
-		"INDEX USING BTREE(detectorName), INDEX USING BTREE (elementID), "
-		"INDEX USING BTREE (eventID))") )
+		"`vmeTime` INT NOT NULL)") )
+		// "INDEX USING BTREE(detectorName), INDEX USING BTREE (elementID), "
+		// "INDEX USING BTREE (eventID))") )
 	{
 		printf("Scaler Table Creation Error: %s\n", mysql_error(conn));
 		return 1;
@@ -711,10 +730,14 @@ int createSQL(MYSQL *conn, char *schema){
 	runStmt = mysql_stmt_init(conn);
 	spillStmt = mysql_stmt_init(conn);
 	codaEvStmt = mysql_stmt_init(conn);
+	hitStmt = mysql_stmt_init(conn);
+	v1495Stmt = mysql_stmt_init(conn);
 
 	mysql_stmt_prepare(runStmt, runInsert, (unsigned int)strlen(runInsert));
 	mysql_stmt_prepare(codaEvStmt, codaEvInsert, (unsigned int)strlen(codaEvInsert));
 	mysql_stmt_prepare(spillStmt, spillInsert, (unsigned int)strlen(spillInsert));
+	mysql_stmt_prepare(hitStmt, hitInsert, (unsigned int)strlen(hitInsert));
+	mysql_stmt_prepare(v1495Stmt, v1495Insert, (unsigned int)strlen(v1495Insert));
 
 	return 0;
 }
@@ -1848,16 +1871,16 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	int windows = 0;
 	int channel = 0;
 	int channelVal = 0;
-	double Td, Ts, Tt;
+	int Td, Ts, Tt;
 	int val, k, l, m, n;
-	double signalWidth[64];
-	double tdcTime;
+	int signalWidth[64];
+	int tdcTime;
 	int window;
 	int word;
 	boardID = 0;
 	int i = 0;
 	int channelFiredBefore[64];
-	
+
 	// Word 1 contains boardID only
 	boardID = get_hex_bits(physicsEvent[j],7,4);
 	// printf("boardID: %.8x\n",boardID);
@@ -1900,14 +1923,14 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 			j++;
 		} else {
 			for(n=0;n<8;n++){
-			  // If a channel fires off and did not fire off in the previous window, create a hit entry
+			
 			  val=get_hex_bit(physicsEvent[j],n);
 			  if(val!=0x0){
 			    if(window!=channelFiredBefore[channel]+1){
 				channelFiredBefore[channel]=window;
 				Ts = window*10+channel_pattern[val];
 				tdcTime = 1280-Td-Ts+Tt;
-				
+
 				tdcCodaID[tdcCount] = codaEventNum;
 				tdcRunID[tdcCount] = runNum;
 				tdcSpillID[tdcCount] = spillID;
@@ -1918,9 +1941,128 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcSignalWidth[tdcCount] = 0;
 				tdcCount++;
-
+				
 				if (tdcCount == max_tdc_rows) {
 				    // printf("Submitting Reimer Data!\n");
+				    make_tdc_query(conn);
+				    tdcCount = 0;
+				}
+			    }
+			    channelFiredBefore[channel]=window;
+			    
+			  }
+			  channel++;
+			}
+			word++;
+			window=floor(word/8.0);
+			channel=(word%8)*8;
+			j++;
+		}
+		
+	}
+
+	j++;
+
+	return j;
+
+}
+
+int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+//
+//	Returns: 0 if successful
+//		 1 on error
+//
+	stopCountTime = 0;
+	int windows = 0;
+	int channel = 0;
+	int Td, Ts, Tt;
+	int val;
+	int tdcTime;
+	int window;
+	int word, zsword;
+	boardID = 0;
+	int i = 0;
+	int k;
+	int buf = 0;
+	int channelFiredBefore[64];
+
+	// Word 1 contains boardID only
+	boardID = get_hex_bits(physicsEvent[j],7,4);
+	// printf("boardID: %.8x\n",boardID);
+	j++;
+	
+	// Word 2 contains Td and signal window width
+	// x2 (resolution) x10 (width of clock)
+	Td = (get_hex_bits(physicsEvent[j],3,2))*2*10;
+	if(get_bin_bit(physicsEvent[j],1)){
+		windows = 64;
+	} else {
+		windows = 32;
+	}
+	j++;
+
+	buf = (0xffff & physicsEvent[j]);
+	j++;
+
+	// Word 3 contains Tt
+	Tt = 0.0;
+	for(k=0;k<3;k++){
+		val = get_hex_bit(physicsEvent[j],k);
+		Tt += trigger_pattern[val];
+	}
+	j++;
+
+	for (k=0;k<64;k++){ 
+		// This flags the window in which a channel has fired previously
+		channelFiredBefore[k]=0xBD;
+	}
+
+	window = 0;
+	zsword = 2;
+	word = 0;
+	channel = 0;
+	word = 0;
+	
+	while(zsword <= buf){
+		
+		if((physicsEvent[j] & 0xFF000000)==0x88000000){
+			
+			for(k=1;k<(buf-zsword)+1;k++){
+			    // Look for the next 0x88 word, see where the next set
+			    // of zeroes starts, and count backwards from there
+			    if ((physicsEvent[j+k] & 0xFF000000)==0x88000000){
+				word = (physicsEvent[j+k] & 0x00000FFF)-(k-1);
+				// Set k to exit the for loop
+				k = buf;
+			    } else if(zsword+k==buf){
+				word = (windows*8)-(k-1);
+			    }
+			}
+			// Figure out which window and channel to start with
+			window=floor(word/8.0);
+			channel=(word%8)*8;
+		} else {
+			for(k=0;k<8;k++){
+			
+			  val=get_hex_bit(physicsEvent[j],k);
+			  if(val!=0x0){
+			    if(window!=channelFiredBefore[channel]+1){
+				channelFiredBefore[channel]=window;
+				Ts = window*10+channel_pattern[val];
+				tdcTime = 1280-Td-Ts+Tt;
+
+				tdcCodaID[tdcCount] = codaEventNum;
+				tdcRunID[tdcCount] = runNum;
+				tdcSpillID[tdcCount] = spillID;
+				tdcROC[tdcCount] = ROCID;
+				tdcBoardID[tdcCount] = boardID;
+				tdcChannelID[tdcCount] = channel;
+				tdcStopTime[tdcCount] = tdcTime;
+				tdcVmeTime[tdcCount] = vmeTime;
+				tdcSignalWidth[tdcCount] = 0;
+				tdcCount++;
+				
+				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
@@ -1932,12 +2074,11 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 			word++;
 			window=floor(word/8.0);
 			channel=(word%8)*8;
-			j++;
 		}
+		j++;
+		zsword++;
+		
 	}
-
-	j++;
-
 	return j;
 
 }
@@ -2029,45 +2170,6 @@ int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 
 }
 
-int eventSpillSQL(MYSQL *conn, unsigned int physicsEvent[100000]) {
-
-   int j = 7;
-   int rocEvLength;
-
-   // SpillID starts at 0 (zero). This way, events that come before a spill
-   // are unambiguously identified, and the first spill event becomes 1 by
-   // this incrementation here.
-   spillID++;
-
-   while(j<evLength){
-	
-	rocEvLength = physicsEvent[j];
-	if ((rocEvLength+j) > evLength) { return 1; }
-	j++;
-	ROCID = get_hex_bits(physicsEvent[j], 7, 4);
-	j++;
-	//GARBAGE = physicsEvent[9]; (3 words to follow)
-	j++;
-	//latchFlag = physicsEvent[11] = 1; (1 word to follow)
-	j++;
-	spillVmeTime = physicsEvent[j];
-	j++;
-	// Sometimes,there's this ignore flag. Sometimes.
-	if(physicsEvent[j] == 0xe906f000) j++;
-	
-	mysql_stmt_bind_param(spillStmt, spillBind);
-	
-	if (mysql_stmt_execute(spillStmt))
-	{
-		printf("Error: %s\n", mysql_error(conn));
-		return 1;
-	}
-   }
-
-   return 0;
-
- }
-
 int eventTriggerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j) {
 	
 	triggerBits = physicsEvent[j];
@@ -2102,8 +2204,8 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 	codaEventNum = physicsEvent[4];
 	eventType = physicsEvent[5];
 	// physicsEvent[6] = 0 (reserved value)
-	// printf("Begin Physics Event Processing\n");
-
+	//printf("Begin Physics Event Processing\n");
+	//printf("SpillID: %i, codaEventNum: %i\n", spillID, codaEventNum);
 	switch (get_hex_bits(physicsEvent[1],7,4)){
 		
 		case 14:
@@ -2120,122 +2222,133 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 			} 
 			return 1; 
 		    }
-		    //printf("RocEventLength: %.8x\n",physicsEvent[j]);
 		    // Variable v denotes the end of this ROC entry
 		    j++;
 		    ROCID = get_hex_bits(physicsEvent[j], 5, 2);
-		    // printf("ROCID: %.8x\n", physicsEvent[j]);
 		    j++;
 		    // physicsEvent[j]=0x11111111; IGNORE
 		    j++;
 		    // physicsEvent[j]=0x11111111; IGNORE
 		    j++;
-		    //if (ROCID == 2) j++;
 		    vmeTime = physicsEvent[j];
 		    j++;
 		    e906flag = physicsEvent[j];
 		    j++;
 		    if ( rocEvLength < 5 ) { j = v+1; }
 		    while(j<=v){
-		    	if        ( e906flag == 0xe906f002 ) {
-				// TDC event type
-				j = eventTDCSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f001 ) {
-				// Latch event type
-				j = eventLatchSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f003 ) {
-				// Scaler event type
-				j = eventScalerSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f004 ) {
-				// New TDC (non zero-suppressed) event type
-				j = eventNewTDCSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f005 ) {
-				// v1495 TDC type
-				j = eventv1495TDCSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f006 ) {
-				// Reimer TDC type
-				j = eventReimerTDCSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f007 ) {
-				// Wide-Channel TDC type
-				j = eventWCTDCSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f008 ) {
-				// Zero-Suppressed Wide-Channel TDC type
-				j = eventZSWCTDCSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f00f ) {
-				// Trigger type
-				j = eventTriggerSQL(conn, physicsEvent, j);
-			} else if ( e906flag == 0xe906f000 ) {
-				// Ignore Board
-				while((j<=v) && (get_hex_bits(physicsEvent[j],7,5)!=0xe906f)){j++;}
-				if(get_hex_bits(physicsEvent[j],7,5)==0xe906f){
-					// The next board has been reached, store the flag
-					e906flag=physicsEvent[j];
-					j++;
-				}
-				if(j==v){
-					// The end of the ROC data has been reached, move on
-					j++;
-				}
-			} else {
-				printf("Unexpected flag in CODA Event %i, ROC %i, after BoardID %.4x:\n"
-				"e906flag = physicsEvent[%i] == %.8x\n\n",
-				codaEventNum, ROCID, boardID,j,physicsEvent[j-1]);
-				// printf("Case 1: %i\nCase 2: %i\nCase 3: %i\nCase 4: %i\nCase 5: %i\n",case1,case2,case3,case4,case5);
-				
-				for(x=j-10;x<j+10;x++){
-					printf("physicsEvent[%i] == %.8x\n",x,physicsEvent[x]);
-				}
-				
-				return 1;
-			}
-			if (j<v){ e906flag = physicsEvent[j]; j++; }
+			j = format(conn, physicsEvent, j, v);
 		    }
 		  }
 		  break;
 
 		case 130:
-			// Slow Control Type
-			//printf("SlowControl Event\n");
-			
-			if ( eventSlowSQL(conn, physicsEvent) ) {
-				printf("Slow Control Event Processing Error\n");
-				return 1;
-			}
-			break;
+		    // Slow Control Type
+		    if ( eventSlowSQL(conn, physicsEvent) ) {
+		    	printf("Slow Control Event Processing Error\n");
+		    	return 1;
+		    }
+		    break;
 
 		case 140:
-			// Start of run descriptor
-			//printf("Descriptor Event\n");
-			if ( eventRunDescriptorSQL(conn, physicsEvent) ) {
-				printf("Start of Run Desctiptor Event Processing Error\n");
-				return 1;
-			}
-			break;
+		    // Start of run descriptor
+		    if ( eventRunDescriptorSQL(conn, physicsEvent) ) {
+		    	printf("Start of Run Desctiptor Event Processing Error\n");
+		    	return 1;
+		    }
+		    break;
 
 		case 11:
-			// Beginning/end of spill.  Format TBD
-			//printf("Begin Spill Event\n");
+		    // Beginning of spill
+		    j = 7;
+		    spillID++;
+		    printf("Begin Spill Event\n");
 			
-			if ( eventSpillSQL(conn, physicsEvent) ) {
-				printf("Beginning of Spill Event Processing Error\n");
+		    while((j<evLength) && (physicsEvent[j] & 0xfffff000)!=0xe906f000){
+				
+			rocEvLength = physicsEvent[j];
+			v = j+rocEvLength;
+			if ((rocEvLength+j) > evLength) { 
+				printf("This error: rocEvLength = %i, j = %i, evLength = %i\n", 
+				rocEvLength, j, evLength);
+				for(x=0;x<evLength;x++){
+					printf("physicsEvent[%i]=%.8x\n",x,physicsEvent[x]);
+				}
+				return 1;
+			}
+			j++;
+			ROCID = get_hex_bits(physicsEvent[j], 7, 4);
+			j++;
+			//GARBAGE = physicsEvent[9]; (3 words to follow)
+			j++;
+			//latchFlag = physicsEvent[11] = 1; (1 word to follow)
+			j++;
+			spillVmeTime = physicsEvent[j];
+			j++;
+				
+			mysql_stmt_bind_param(spillStmt, spillBind);
+				
+			if (mysql_stmt_execute(spillStmt))
+			{
+				printf("Error: %s\n", mysql_error(conn));
 				return 1;
 			}
 			
-			break;
+			e906flag = physicsEvent[j];
+			j++;
+			if ( rocEvLength < 5 ) { j = v+1; }
+			while(j<=v){
+				j = format(conn, physicsEvent, j, v);
+			}
+		    }
+		    break;
 
 		case 12:
-			// Beginning/end of spill.  Format TBD.
-			//printf("End Spill Event\n");
-			if ( eventSpillSQL(conn, physicsEvent) ) {
-				printf("End of Spill Event Processing Error in Event %i\n",codaEventNum);
+		    // End of spill.
+		    j = 7;
+ 		    printf("End Spill Event\n");
+		    while((j<evLength) && (physicsEvent[j] & 0xfffff000)!=0xe906f000){
+				
+			rocEvLength = physicsEvent[j];
+			v = j+rocEvLength;
+			if ((rocEvLength+j) > evLength) { 
+				printf("This error: rocEvLength = %i, j = %i, evLength = %i\n", 
+				rocEvLength, j, evLength);
+				for(x=0;x<evLength;x++){
+					printf("physicsEvent[%i]=%.8x\n",x,physicsEvent[x]);
+				}
 				return 1;
 			}
-			break;			
+			j++;
+			ROCID = get_hex_bits(physicsEvent[j], 7, 4);
+			j++;
+			//GARBAGE = physicsEvent[9]; (3 words to follow)
+			j++;
+			//latchFlag = physicsEvent[11] = 1; (1 word to follow)
+			j++;
+			spillVmeTime = physicsEvent[j];
+			j++;
+			
+			mysql_stmt_bind_param(spillStmt, spillBind);
+				
+			if (mysql_stmt_execute(spillStmt))
+			{
+				printf("Error: %s\n", mysql_error(conn));
+				return 1;
+			}
+			
+			e906flag = physicsEvent[j];
+			j++;
+			if ( rocEvLength < 5 ) { j = v+1; }
+			    while(j<=v){
+				j = format(conn, physicsEvent, j, v);
+			    }
+			}
+		    break;
 
 		default:
-			// Awaiting further event types
-			printf("Unknown event type: %x\n", eventType);
-			break;
+		    // Awaiting further event types
+		    printf("Unknown event type: %x\n", eventType);
+		    break;
 	}	
 
 	evNum++;
@@ -2249,6 +2362,69 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 	}
 	
 	return 0;
+
+}
+
+int format(MYSQL *conn, unsigned int physicsEvent[100000], int j, int v) {
+
+	int x;
+
+	if        ( e906flag == 0xe906f002 ) {
+		// TDC event type
+		j = eventTDCSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f001 ) {
+		// Latch event type
+		j = eventLatchSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f003 ) {
+		// Scaler event type
+		j = eventScalerSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f004 ) {
+		// New TDC (non zero-suppressed) event type
+		j = eventNewTDCSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f005 ) {
+		// v1495 TDC type
+		j = eventv1495TDCSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f006 ) {
+		// Reimer TDC type
+		j = eventReimerTDCSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f007 ) {
+		// Wide-Channel TDC type
+		j = eventWCTDCSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f008 ) {
+		// Zero-Suppressed Wide-Channel TDC type
+		j = eventZSWCTDCSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f009 ) {
+		// Zero-Suppressed Jy TDC type
+		j = eventJyTDCSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f00f ) {
+		// Trigger type
+		j = eventTriggerSQL(conn, physicsEvent, j);
+	} else if ( e906flag == 0xe906f000 ) {
+		// Ignore Board
+		while((j<=v) && ((physicsEvent[j] & 0xFFFFF000)!=0xe906f000)){j++;}
+		if((physicsEvent[j] & 0xFFFFF000)==0xe906f000){
+			// The next board has been reached, store the flag
+			e906flag=physicsEvent[j];
+			j++;
+		}
+		if(j==v){
+			// The end of the ROC data has been reached, move on
+			j++;
+		}
+	} else {
+		printf("Unexpected flag in CODA Event %i, ROC %i, after BoardID %.4x:\n"
+			"e906flag = physicsEvent[%i] == %.8x\n\n",
+		codaEventNum, ROCID, boardID,j,physicsEvent[j-1]);
+		
+		for(x=500;x<750;x++){
+			printf("physicsEvent[%i] == %.8x\n",x,physicsEvent[x]);
+		}
+		
+		return 1;
+	}
+	if (j<v){ e906flag = physicsEvent[j]; j++; }
+
+	return j;
 
 }
 
@@ -2274,287 +2450,76 @@ int endEventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 
 int make_tdc_query(MYSQL* conn){
 
-	char sqlTDCQuery[100000];
+	char cwd[1000];
+	char outputFileName[10000];
+	char qryString[1000];
+	int pid, k;
+	FILE *fp;
 
 	if( mysql_query(conn, "DELETE FROM tempTDC") ) {
 		printf("Error: %s\n", mysql_error(conn));
    	}
+/*
+	pid = getpid();
 
-	sprintf(sqlTDCQuery, "INSERT INTO tempTDC (eventID, runID, spillID, rocID, boardID, channelID, "
-	"tdcTime, signalWidth, vmeTime) "
-	"VALUES (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f, %f)",
-	tdcCodaID[0], tdcRunID[0], tdcSpillID[0], tdcROC[0], tdcBoardID[0], tdcChannelID[0], tdcStopTime[0], tdcSignalWidth[0], tdcVmeTime[0],
-	tdcCodaID[1], tdcRunID[1], tdcSpillID[1], tdcROC[1], tdcBoardID[1], tdcChannelID[1], tdcStopTime[1], tdcSignalWidth[1], tdcVmeTime[1],
-	tdcCodaID[2], tdcRunID[2], tdcSpillID[2], tdcROC[2], tdcBoardID[2], tdcChannelID[2], tdcStopTime[2], tdcSignalWidth[2], tdcVmeTime[2],
-	tdcCodaID[3], tdcRunID[3], tdcSpillID[3], tdcROC[3], tdcBoardID[3], tdcChannelID[3], tdcStopTime[3], tdcSignalWidth[3], tdcVmeTime[3],
-	tdcCodaID[4], tdcRunID[4], tdcSpillID[4], tdcROC[4], tdcBoardID[4], tdcChannelID[4], tdcStopTime[4], tdcSignalWidth[4], tdcVmeTime[4],
-	tdcCodaID[5], tdcRunID[5], tdcSpillID[5], tdcROC[5], tdcBoardID[5], tdcChannelID[5], tdcStopTime[5], tdcSignalWidth[5], tdcVmeTime[5],
-	tdcCodaID[6], tdcRunID[6], tdcSpillID[6], tdcROC[6], tdcBoardID[6], tdcChannelID[6], tdcStopTime[6], tdcSignalWidth[6], tdcVmeTime[6],
-	tdcCodaID[7], tdcRunID[7], tdcSpillID[7], tdcROC[7], tdcBoardID[7], tdcChannelID[7], tdcStopTime[7], tdcSignalWidth[7], tdcVmeTime[7],
-	tdcCodaID[8], tdcRunID[8], tdcSpillID[8], tdcROC[8], tdcBoardID[8], tdcChannelID[8], tdcStopTime[8], tdcSignalWidth[8], tdcVmeTime[8],
-	tdcCodaID[9], tdcRunID[9], tdcSpillID[9], tdcROC[9], tdcBoardID[9], tdcChannelID[9], tdcStopTime[9], tdcSignalWidth[9], tdcVmeTime[9],
-	tdcCodaID[10], tdcRunID[10], tdcSpillID[10], tdcROC[10], tdcBoardID[10], tdcChannelID[10], tdcStopTime[10], tdcSignalWidth[10], tdcVmeTime[10],
-	tdcCodaID[11], tdcRunID[11], tdcSpillID[11], tdcROC[11], tdcBoardID[11], tdcChannelID[11], tdcStopTime[11], tdcSignalWidth[11], tdcVmeTime[11],
-	tdcCodaID[12], tdcRunID[12], tdcSpillID[12], tdcROC[12], tdcBoardID[12], tdcChannelID[12], tdcStopTime[12], tdcSignalWidth[12], tdcVmeTime[12],
-	tdcCodaID[13], tdcRunID[13], tdcSpillID[13], tdcROC[13], tdcBoardID[13], tdcChannelID[13], tdcStopTime[13], tdcSignalWidth[13], tdcVmeTime[13],
-	tdcCodaID[14], tdcRunID[14], tdcSpillID[14], tdcROC[14], tdcBoardID[14], tdcChannelID[14], tdcStopTime[14], tdcSignalWidth[14], tdcVmeTime[14],
-	tdcCodaID[15], tdcRunID[15], tdcSpillID[15], tdcROC[15], tdcBoardID[15], tdcChannelID[15], tdcStopTime[15], tdcSignalWidth[15], tdcVmeTime[15],
-	tdcCodaID[16], tdcRunID[16], tdcSpillID[16], tdcROC[16], tdcBoardID[16], tdcChannelID[16], tdcStopTime[16], tdcSignalWidth[16], tdcVmeTime[16],
-	tdcCodaID[17], tdcRunID[17], tdcSpillID[17], tdcROC[17], tdcBoardID[17], tdcChannelID[17], tdcStopTime[17], tdcSignalWidth[17], tdcVmeTime[17],
-	tdcCodaID[18], tdcRunID[18], tdcSpillID[18], tdcROC[18], tdcBoardID[18], tdcChannelID[18], tdcStopTime[18], tdcSignalWidth[18], tdcVmeTime[18],
-	tdcCodaID[19], tdcRunID[19], tdcSpillID[19], tdcROC[19], tdcBoardID[19], tdcChannelID[19], tdcStopTime[19], tdcSignalWidth[19], tdcVmeTime[19],
-	tdcCodaID[20], tdcRunID[20], tdcSpillID[20], tdcROC[20], tdcBoardID[20], tdcChannelID[20], tdcStopTime[20], tdcSignalWidth[20], tdcVmeTime[20],
-	tdcCodaID[21], tdcRunID[21], tdcSpillID[21], tdcROC[21], tdcBoardID[21], tdcChannelID[21], tdcStopTime[21], tdcSignalWidth[21], tdcVmeTime[21],
-	tdcCodaID[22], tdcRunID[22], tdcSpillID[22], tdcROC[22], tdcBoardID[22], tdcChannelID[22], tdcStopTime[22], tdcSignalWidth[22], tdcVmeTime[22],
-	tdcCodaID[23], tdcRunID[23], tdcSpillID[23], tdcROC[23], tdcBoardID[23], tdcChannelID[23], tdcStopTime[23], tdcSignalWidth[23], tdcVmeTime[23],
-	tdcCodaID[24], tdcRunID[24], tdcSpillID[24], tdcROC[24], tdcBoardID[24], tdcChannelID[24], tdcStopTime[24], tdcSignalWidth[24], tdcVmeTime[24],
-	tdcCodaID[25], tdcRunID[25], tdcSpillID[25], tdcROC[25], tdcBoardID[25], tdcChannelID[25], tdcStopTime[25], tdcSignalWidth[25], tdcVmeTime[25],
-	tdcCodaID[26], tdcRunID[26], tdcSpillID[26], tdcROC[26], tdcBoardID[26], tdcChannelID[26], tdcStopTime[26], tdcSignalWidth[26], tdcVmeTime[26],
-	tdcCodaID[27], tdcRunID[27], tdcSpillID[27], tdcROC[27], tdcBoardID[27], tdcChannelID[27], tdcStopTime[27], tdcSignalWidth[27], tdcVmeTime[27],
-	tdcCodaID[28], tdcRunID[28], tdcSpillID[28], tdcROC[28], tdcBoardID[28], tdcChannelID[28], tdcStopTime[28], tdcSignalWidth[28], tdcVmeTime[28],
-	tdcCodaID[29], tdcRunID[29], tdcSpillID[29], tdcROC[29], tdcBoardID[29], tdcChannelID[29], tdcStopTime[29], tdcSignalWidth[29], tdcVmeTime[29],
-	tdcCodaID[30], tdcRunID[30], tdcSpillID[30], tdcROC[30], tdcBoardID[30], tdcChannelID[30], tdcStopTime[30], tdcSignalWidth[30], tdcVmeTime[30],
-	tdcCodaID[31], tdcRunID[31], tdcSpillID[31], tdcROC[31], tdcBoardID[31], tdcChannelID[31], tdcStopTime[31], tdcSignalWidth[31], tdcVmeTime[31],
-	tdcCodaID[32], tdcRunID[32], tdcSpillID[32], tdcROC[32], tdcBoardID[32], tdcChannelID[32], tdcStopTime[32], tdcSignalWidth[32], tdcVmeTime[32],
-	tdcCodaID[33], tdcRunID[33], tdcSpillID[33], tdcROC[33], tdcBoardID[33], tdcChannelID[33], tdcStopTime[33], tdcSignalWidth[33], tdcVmeTime[33],
-	tdcCodaID[34], tdcRunID[34], tdcSpillID[34], tdcROC[34], tdcBoardID[34], tdcChannelID[34], tdcStopTime[34], tdcSignalWidth[34], tdcVmeTime[34],
-	tdcCodaID[35], tdcRunID[35], tdcSpillID[35], tdcROC[35], tdcBoardID[35], tdcChannelID[35], tdcStopTime[35], tdcSignalWidth[35], tdcVmeTime[35],
-	tdcCodaID[36], tdcRunID[36], tdcSpillID[36], tdcROC[36], tdcBoardID[36], tdcChannelID[36], tdcStopTime[36], tdcSignalWidth[36], tdcVmeTime[36],
-	tdcCodaID[37], tdcRunID[37], tdcSpillID[37], tdcROC[37], tdcBoardID[37], tdcChannelID[37], tdcStopTime[37], tdcSignalWidth[37], tdcVmeTime[37],
-	tdcCodaID[38], tdcRunID[38], tdcSpillID[38], tdcROC[38], tdcBoardID[38], tdcChannelID[38], tdcStopTime[38], tdcSignalWidth[38], tdcVmeTime[38],
-	tdcCodaID[39], tdcRunID[39], tdcSpillID[39], tdcROC[39], tdcBoardID[39], tdcChannelID[39], tdcStopTime[39], tdcSignalWidth[39], tdcVmeTime[39],
-	tdcCodaID[40], tdcRunID[40], tdcSpillID[40], tdcROC[40], tdcBoardID[40], tdcChannelID[40], tdcStopTime[40], tdcSignalWidth[40], tdcVmeTime[40],
-	tdcCodaID[41], tdcRunID[41], tdcSpillID[41], tdcROC[41], tdcBoardID[41], tdcChannelID[41], tdcStopTime[41], tdcSignalWidth[41], tdcVmeTime[41],
-	tdcCodaID[42], tdcRunID[42], tdcSpillID[42], tdcROC[42], tdcBoardID[42], tdcChannelID[42], tdcStopTime[42], tdcSignalWidth[42], tdcVmeTime[42],
-	tdcCodaID[43], tdcRunID[43], tdcSpillID[43], tdcROC[43], tdcBoardID[43], tdcChannelID[43], tdcStopTime[43], tdcSignalWidth[43], tdcVmeTime[43],
-	tdcCodaID[44], tdcRunID[44], tdcSpillID[44], tdcROC[44], tdcBoardID[44], tdcChannelID[44], tdcStopTime[44], tdcSignalWidth[44], tdcVmeTime[44],
-	tdcCodaID[45], tdcRunID[45], tdcSpillID[45], tdcROC[45], tdcBoardID[45], tdcChannelID[45], tdcStopTime[45], tdcSignalWidth[45], tdcVmeTime[45],
-	tdcCodaID[46], tdcRunID[46], tdcSpillID[46], tdcROC[46], tdcBoardID[46], tdcChannelID[46], tdcStopTime[46], tdcSignalWidth[46], tdcVmeTime[46],
-	tdcCodaID[47], tdcRunID[47], tdcSpillID[47], tdcROC[47], tdcBoardID[47], tdcChannelID[47], tdcStopTime[47], tdcSignalWidth[47], tdcVmeTime[47],
-	tdcCodaID[48], tdcRunID[48], tdcSpillID[48], tdcROC[48], tdcBoardID[48], tdcChannelID[48], tdcStopTime[48], tdcSignalWidth[48], tdcVmeTime[48],
-	tdcCodaID[49], tdcRunID[49], tdcSpillID[49], tdcROC[49], tdcBoardID[49], tdcChannelID[49], tdcStopTime[49], tdcSignalWidth[49], tdcVmeTime[49],
-	tdcCodaID[50], tdcRunID[50], tdcSpillID[50], tdcROC[50], tdcBoardID[50], tdcChannelID[50], tdcStopTime[50], tdcSignalWidth[50], tdcVmeTime[50],
-	tdcCodaID[51], tdcRunID[51], tdcSpillID[51], tdcROC[51], tdcBoardID[51], tdcChannelID[51], tdcStopTime[51], tdcSignalWidth[51], tdcVmeTime[51],
-	tdcCodaID[52], tdcRunID[52], tdcSpillID[52], tdcROC[52], tdcBoardID[52], tdcChannelID[52], tdcStopTime[52], tdcSignalWidth[52], tdcVmeTime[52],
-	tdcCodaID[53], tdcRunID[53], tdcSpillID[53], tdcROC[53], tdcBoardID[53], tdcChannelID[53], tdcStopTime[53], tdcSignalWidth[53], tdcVmeTime[53],
-	tdcCodaID[54], tdcRunID[54], tdcSpillID[54], tdcROC[54], tdcBoardID[54], tdcChannelID[54], tdcStopTime[54], tdcSignalWidth[54], tdcVmeTime[54],
-	tdcCodaID[55], tdcRunID[55], tdcSpillID[55], tdcROC[55], tdcBoardID[55], tdcChannelID[55], tdcStopTime[55], tdcSignalWidth[55], tdcVmeTime[55],
-	tdcCodaID[56], tdcRunID[56], tdcSpillID[56], tdcROC[56], tdcBoardID[56], tdcChannelID[56], tdcStopTime[56], tdcSignalWidth[56], tdcVmeTime[56],
-	tdcCodaID[57], tdcRunID[57], tdcSpillID[57], tdcROC[57], tdcBoardID[57], tdcChannelID[57], tdcStopTime[57], tdcSignalWidth[57], tdcVmeTime[57],
-	tdcCodaID[58], tdcRunID[58], tdcSpillID[58], tdcROC[58], tdcBoardID[58], tdcChannelID[58], tdcStopTime[58], tdcSignalWidth[58], tdcVmeTime[58],
-	tdcCodaID[59], tdcRunID[59], tdcSpillID[59], tdcROC[59], tdcBoardID[59], tdcChannelID[59], tdcStopTime[59], tdcSignalWidth[59], tdcVmeTime[59],
-	tdcCodaID[60], tdcRunID[60], tdcSpillID[60], tdcROC[60], tdcBoardID[60], tdcChannelID[60], tdcStopTime[60], tdcSignalWidth[60], tdcVmeTime[60],
-	tdcCodaID[61], tdcRunID[61], tdcSpillID[61], tdcROC[61], tdcBoardID[61], tdcChannelID[61], tdcStopTime[61], tdcSignalWidth[61], tdcVmeTime[61],
-	tdcCodaID[62], tdcRunID[62], tdcSpillID[62], tdcROC[62], tdcBoardID[62], tdcChannelID[62], tdcStopTime[62], tdcSignalWidth[62], tdcVmeTime[62],
-	tdcCodaID[63], tdcRunID[63], tdcSpillID[63], tdcROC[63], tdcBoardID[63], tdcChannelID[63], tdcStopTime[63], tdcSignalWidth[63], tdcVmeTime[63],
-	tdcCodaID[64], tdcRunID[64], tdcSpillID[64], tdcROC[64], tdcBoardID[64], tdcChannelID[64], tdcStopTime[64], tdcSignalWidth[64], tdcVmeTime[64],
-	tdcCodaID[65], tdcRunID[65], tdcSpillID[65], tdcROC[65], tdcBoardID[65], tdcChannelID[65], tdcStopTime[65], tdcSignalWidth[65], tdcVmeTime[65],
-	tdcCodaID[66], tdcRunID[66], tdcSpillID[66], tdcROC[66], tdcBoardID[66], tdcChannelID[66], tdcStopTime[66], tdcSignalWidth[66], tdcVmeTime[66],
-	tdcCodaID[67], tdcRunID[67], tdcSpillID[67], tdcROC[67], tdcBoardID[67], tdcChannelID[67], tdcStopTime[67], tdcSignalWidth[67], tdcVmeTime[67],
-	tdcCodaID[68], tdcRunID[68], tdcSpillID[68], tdcROC[68], tdcBoardID[68], tdcChannelID[68], tdcStopTime[68], tdcSignalWidth[68], tdcVmeTime[68],
-	tdcCodaID[69], tdcRunID[69], tdcSpillID[69], tdcROC[69], tdcBoardID[69], tdcChannelID[69], tdcStopTime[69], tdcSignalWidth[69], tdcVmeTime[69],
-	tdcCodaID[70], tdcRunID[70], tdcSpillID[70], tdcROC[70], tdcBoardID[70], tdcChannelID[70], tdcStopTime[70], tdcSignalWidth[70], tdcVmeTime[70],
-	tdcCodaID[71], tdcRunID[71], tdcSpillID[71], tdcROC[71], tdcBoardID[71], tdcChannelID[71], tdcStopTime[71], tdcSignalWidth[71], tdcVmeTime[71],
-	tdcCodaID[72], tdcRunID[72], tdcSpillID[72], tdcROC[72], tdcBoardID[72], tdcChannelID[72], tdcStopTime[72], tdcSignalWidth[72], tdcVmeTime[72],
-	tdcCodaID[73], tdcRunID[73], tdcSpillID[73], tdcROC[73], tdcBoardID[73], tdcChannelID[73], tdcStopTime[73], tdcSignalWidth[73], tdcVmeTime[73],
-	tdcCodaID[74], tdcRunID[74], tdcSpillID[74], tdcROC[74], tdcBoardID[74], tdcChannelID[74], tdcStopTime[74], tdcSignalWidth[74], tdcVmeTime[74],
-	tdcCodaID[75], tdcRunID[75], tdcSpillID[75], tdcROC[75], tdcBoardID[75], tdcChannelID[75], tdcStopTime[75], tdcSignalWidth[75], tdcVmeTime[75],
-	tdcCodaID[76], tdcRunID[76], tdcSpillID[76], tdcROC[76], tdcBoardID[76], tdcChannelID[76], tdcStopTime[76], tdcSignalWidth[76], tdcVmeTime[76],
-	tdcCodaID[77], tdcRunID[77], tdcSpillID[77], tdcROC[77], tdcBoardID[77], tdcChannelID[77], tdcStopTime[77], tdcSignalWidth[77], tdcVmeTime[77],
-	tdcCodaID[78], tdcRunID[78], tdcSpillID[78], tdcROC[78], tdcBoardID[78], tdcChannelID[78], tdcStopTime[78], tdcSignalWidth[78], tdcVmeTime[78],
-	tdcCodaID[79], tdcRunID[79], tdcSpillID[79], tdcROC[79], tdcBoardID[79], tdcChannelID[79], tdcStopTime[79], tdcSignalWidth[79], tdcVmeTime[79],
-	tdcCodaID[80], tdcRunID[80], tdcSpillID[80], tdcROC[80], tdcBoardID[80], tdcChannelID[80], tdcStopTime[80], tdcSignalWidth[80], tdcVmeTime[80],
-	tdcCodaID[81], tdcRunID[81], tdcSpillID[81], tdcROC[81], tdcBoardID[81], tdcChannelID[81], tdcStopTime[81], tdcSignalWidth[81], tdcVmeTime[81],
-	tdcCodaID[82], tdcRunID[82], tdcSpillID[82], tdcROC[82], tdcBoardID[82], tdcChannelID[82], tdcStopTime[82], tdcSignalWidth[82], tdcVmeTime[82],
-	tdcCodaID[83], tdcRunID[83], tdcSpillID[83], tdcROC[83], tdcBoardID[83], tdcChannelID[83], tdcStopTime[83], tdcSignalWidth[83], tdcVmeTime[83],
-	tdcCodaID[84], tdcRunID[84], tdcSpillID[84], tdcROC[84], tdcBoardID[84], tdcChannelID[84], tdcStopTime[84], tdcSignalWidth[84], tdcVmeTime[84],
-	tdcCodaID[85], tdcRunID[85], tdcSpillID[85], tdcROC[85], tdcBoardID[85], tdcChannelID[85], tdcStopTime[85], tdcSignalWidth[85], tdcVmeTime[85],
-	tdcCodaID[86], tdcRunID[86], tdcSpillID[86], tdcROC[86], tdcBoardID[86], tdcChannelID[86], tdcStopTime[86], tdcSignalWidth[86], tdcVmeTime[86],
-	tdcCodaID[87], tdcRunID[87], tdcSpillID[87], tdcROC[87], tdcBoardID[87], tdcChannelID[87], tdcStopTime[87], tdcSignalWidth[87], tdcVmeTime[87],
-	tdcCodaID[88], tdcRunID[88], tdcSpillID[88], tdcROC[88], tdcBoardID[88], tdcChannelID[88], tdcStopTime[88], tdcSignalWidth[88], tdcVmeTime[88],
-	tdcCodaID[89], tdcRunID[89], tdcSpillID[89], tdcROC[89], tdcBoardID[89], tdcChannelID[89], tdcStopTime[89], tdcSignalWidth[89], tdcVmeTime[89],
-	tdcCodaID[90], tdcRunID[90], tdcSpillID[90], tdcROC[90], tdcBoardID[90], tdcChannelID[90], tdcStopTime[90], tdcSignalWidth[90], tdcVmeTime[90],
-	tdcCodaID[91], tdcRunID[91], tdcSpillID[91], tdcROC[91], tdcBoardID[91], tdcChannelID[91], tdcStopTime[91], tdcSignalWidth[91], tdcVmeTime[91],
-	tdcCodaID[92], tdcRunID[92], tdcSpillID[92], tdcROC[92], tdcBoardID[92], tdcChannelID[92], tdcStopTime[92], tdcSignalWidth[92], tdcVmeTime[92],
-	tdcCodaID[93], tdcRunID[93], tdcSpillID[93], tdcROC[93], tdcBoardID[93], tdcChannelID[93], tdcStopTime[93], tdcSignalWidth[93], tdcVmeTime[93],
-	tdcCodaID[94], tdcRunID[94], tdcSpillID[94], tdcROC[94], tdcBoardID[94], tdcChannelID[94], tdcStopTime[94], tdcSignalWidth[94], tdcVmeTime[94],
-	tdcCodaID[95], tdcRunID[95], tdcSpillID[95], tdcROC[95], tdcBoardID[95], tdcChannelID[95], tdcStopTime[95], tdcSignalWidth[95], tdcVmeTime[95],
-	tdcCodaID[96], tdcRunID[96], tdcSpillID[96], tdcROC[96], tdcBoardID[96], tdcChannelID[96], tdcStopTime[96], tdcSignalWidth[96], tdcVmeTime[96],
-	tdcCodaID[97], tdcRunID[97], tdcSpillID[97], tdcROC[97], tdcBoardID[97], tdcChannelID[97], tdcStopTime[97], tdcSignalWidth[97], tdcVmeTime[97],
-	tdcCodaID[98], tdcRunID[98], tdcSpillID[98], tdcROC[98], tdcBoardID[98], tdcChannelID[98], tdcStopTime[98], tdcSignalWidth[98], tdcVmeTime[98],
-	tdcCodaID[99], tdcRunID[99], tdcSpillID[99], tdcROC[99], tdcBoardID[99], tdcChannelID[99], tdcStopTime[99], tdcSignalWidth[99], tdcVmeTime[99],
-	tdcCodaID[100], tdcRunID[100], tdcSpillID[100], tdcROC[100], tdcBoardID[100], tdcChannelID[100], tdcStopTime[100], tdcSignalWidth[100], tdcVmeTime[100],
-	tdcCodaID[101], tdcRunID[101], tdcSpillID[101], tdcROC[101], tdcBoardID[101], tdcChannelID[101], tdcStopTime[101], tdcSignalWidth[101], tdcVmeTime[101],
-	tdcCodaID[102], tdcRunID[102], tdcSpillID[102], tdcROC[102], tdcBoardID[102], tdcChannelID[102], tdcStopTime[102], tdcSignalWidth[102], tdcVmeTime[102],
-	tdcCodaID[103], tdcRunID[103], tdcSpillID[103], tdcROC[103], tdcBoardID[103], tdcChannelID[103], tdcStopTime[103], tdcSignalWidth[103], tdcVmeTime[103],
-	tdcCodaID[104], tdcRunID[104], tdcSpillID[104], tdcROC[104], tdcBoardID[104], tdcChannelID[104], tdcStopTime[104], tdcSignalWidth[104], tdcVmeTime[104],
-	tdcCodaID[105], tdcRunID[105], tdcSpillID[105], tdcROC[105], tdcBoardID[105], tdcChannelID[105], tdcStopTime[105], tdcSignalWidth[105], tdcVmeTime[105],
-	tdcCodaID[106], tdcRunID[106], tdcSpillID[106], tdcROC[106], tdcBoardID[106], tdcChannelID[106], tdcStopTime[106], tdcSignalWidth[106], tdcVmeTime[106],
-	tdcCodaID[107], tdcRunID[107], tdcSpillID[107], tdcROC[107], tdcBoardID[107], tdcChannelID[107], tdcStopTime[107], tdcSignalWidth[107], tdcVmeTime[107],
-	tdcCodaID[108], tdcRunID[108], tdcSpillID[108], tdcROC[108], tdcBoardID[108], tdcChannelID[108], tdcStopTime[108], tdcSignalWidth[108], tdcVmeTime[108],
-	tdcCodaID[109], tdcRunID[109], tdcSpillID[109], tdcROC[109], tdcBoardID[109], tdcChannelID[109], tdcStopTime[109], tdcSignalWidth[109], tdcVmeTime[109],
-	tdcCodaID[110], tdcRunID[110], tdcSpillID[110], tdcROC[110], tdcBoardID[110], tdcChannelID[110], tdcStopTime[110], tdcSignalWidth[110], tdcVmeTime[110],
-	tdcCodaID[111], tdcRunID[111], tdcSpillID[111], tdcROC[111], tdcBoardID[111], tdcChannelID[111], tdcStopTime[111], tdcSignalWidth[111], tdcVmeTime[111],
-	tdcCodaID[112], tdcRunID[112], tdcSpillID[112], tdcROC[112], tdcBoardID[112], tdcChannelID[112], tdcStopTime[112], tdcSignalWidth[112], tdcVmeTime[112],
-	tdcCodaID[113], tdcRunID[113], tdcSpillID[113], tdcROC[113], tdcBoardID[113], tdcChannelID[113], tdcStopTime[113], tdcSignalWidth[113], tdcVmeTime[113],
-	tdcCodaID[114], tdcRunID[114], tdcSpillID[114], tdcROC[114], tdcBoardID[114], tdcChannelID[114], tdcStopTime[114], tdcSignalWidth[114], tdcVmeTime[114],
-	tdcCodaID[115], tdcRunID[115], tdcSpillID[115], tdcROC[115], tdcBoardID[115], tdcChannelID[115], tdcStopTime[115], tdcSignalWidth[115], tdcVmeTime[115],
-	tdcCodaID[116], tdcRunID[116], tdcSpillID[116], tdcROC[116], tdcBoardID[116], tdcChannelID[116], tdcStopTime[116], tdcSignalWidth[116], tdcVmeTime[116],
-	tdcCodaID[117], tdcRunID[117], tdcSpillID[117], tdcROC[117], tdcBoardID[117], tdcChannelID[117], tdcStopTime[117], tdcSignalWidth[117], tdcVmeTime[117],
-	tdcCodaID[118], tdcRunID[118], tdcSpillID[118], tdcROC[118], tdcBoardID[118], tdcChannelID[118], tdcStopTime[118], tdcSignalWidth[118], tdcVmeTime[118],
-	tdcCodaID[119], tdcRunID[119], tdcSpillID[119], tdcROC[119], tdcBoardID[119], tdcChannelID[119], tdcStopTime[119], tdcSignalWidth[119], tdcVmeTime[119],
-	tdcCodaID[120], tdcRunID[120], tdcSpillID[120], tdcROC[120], tdcBoardID[120], tdcChannelID[120], tdcStopTime[120], tdcSignalWidth[120], tdcVmeTime[120],
-	tdcCodaID[121], tdcRunID[121], tdcSpillID[121], tdcROC[121], tdcBoardID[121], tdcChannelID[121], tdcStopTime[121], tdcSignalWidth[121], tdcVmeTime[121],
-	tdcCodaID[122], tdcRunID[122], tdcSpillID[122], tdcROC[122], tdcBoardID[122], tdcChannelID[122], tdcStopTime[122], tdcSignalWidth[122], tdcVmeTime[122],
-	tdcCodaID[123], tdcRunID[123], tdcSpillID[123], tdcROC[123], tdcBoardID[123], tdcChannelID[123], tdcStopTime[123], tdcSignalWidth[123], tdcVmeTime[123],
-	tdcCodaID[124], tdcRunID[124], tdcSpillID[124], tdcROC[124], tdcBoardID[124], tdcChannelID[124], tdcStopTime[124], tdcSignalWidth[124], tdcVmeTime[124],
-	tdcCodaID[125], tdcRunID[125], tdcSpillID[125], tdcROC[125], tdcBoardID[125], tdcChannelID[125], tdcStopTime[125], tdcSignalWidth[125], tdcVmeTime[125],
-	tdcCodaID[126], tdcRunID[126], tdcSpillID[126], tdcROC[126], tdcBoardID[126], tdcChannelID[126], tdcStopTime[126], tdcSignalWidth[126], tdcVmeTime[126],
-	tdcCodaID[127], tdcRunID[127], tdcSpillID[127], tdcROC[127], tdcBoardID[127], tdcChannelID[127], tdcStopTime[127], tdcSignalWidth[127], tdcVmeTime[127],
-	tdcCodaID[128], tdcRunID[128], tdcSpillID[128], tdcROC[128], tdcBoardID[128], tdcChannelID[128], tdcStopTime[128], tdcSignalWidth[128], tdcVmeTime[128],
-	tdcCodaID[129], tdcRunID[129], tdcSpillID[129], tdcROC[129], tdcBoardID[129], tdcChannelID[129], tdcStopTime[129], tdcSignalWidth[129], tdcVmeTime[129],
-	tdcCodaID[130], tdcRunID[130], tdcSpillID[130], tdcROC[130], tdcBoardID[130], tdcChannelID[130], tdcStopTime[130], tdcSignalWidth[130], tdcVmeTime[130],
-	tdcCodaID[131], tdcRunID[131], tdcSpillID[131], tdcROC[131], tdcBoardID[131], tdcChannelID[131], tdcStopTime[131], tdcSignalWidth[131], tdcVmeTime[131],
-	tdcCodaID[132], tdcRunID[132], tdcSpillID[132], tdcROC[132], tdcBoardID[132], tdcChannelID[132], tdcStopTime[132], tdcSignalWidth[132], tdcVmeTime[132],
-	tdcCodaID[133], tdcRunID[133], tdcSpillID[133], tdcROC[133], tdcBoardID[133], tdcChannelID[133], tdcStopTime[133], tdcSignalWidth[133], tdcVmeTime[133],
-	tdcCodaID[134], tdcRunID[134], tdcSpillID[134], tdcROC[134], tdcBoardID[134], tdcChannelID[134], tdcStopTime[134], tdcSignalWidth[134], tdcVmeTime[134],
-	tdcCodaID[135], tdcRunID[135], tdcSpillID[135], tdcROC[135], tdcBoardID[135], tdcChannelID[135], tdcStopTime[135], tdcSignalWidth[135], tdcVmeTime[135],
-	tdcCodaID[136], tdcRunID[136], tdcSpillID[136], tdcROC[136], tdcBoardID[136], tdcChannelID[136], tdcStopTime[136], tdcSignalWidth[136], tdcVmeTime[136],
-	tdcCodaID[137], tdcRunID[137], tdcSpillID[137], tdcROC[137], tdcBoardID[137], tdcChannelID[137], tdcStopTime[137], tdcSignalWidth[137], tdcVmeTime[137],
-	tdcCodaID[138], tdcRunID[138], tdcSpillID[138], tdcROC[138], tdcBoardID[138], tdcChannelID[138], tdcStopTime[138], tdcSignalWidth[138], tdcVmeTime[138],
-	tdcCodaID[139], tdcRunID[139], tdcSpillID[139], tdcROC[139], tdcBoardID[139], tdcChannelID[139], tdcStopTime[139], tdcSignalWidth[139], tdcVmeTime[139],
-	tdcCodaID[140], tdcRunID[140], tdcSpillID[140], tdcROC[140], tdcBoardID[140], tdcChannelID[140], tdcStopTime[140], tdcSignalWidth[140], tdcVmeTime[140],
-	tdcCodaID[141], tdcRunID[141], tdcSpillID[141], tdcROC[141], tdcBoardID[141], tdcChannelID[141], tdcStopTime[141], tdcSignalWidth[141], tdcVmeTime[141],
-	tdcCodaID[142], tdcRunID[142], tdcSpillID[142], tdcROC[142], tdcBoardID[142], tdcChannelID[142], tdcStopTime[142], tdcSignalWidth[142], tdcVmeTime[142],
-	tdcCodaID[143], tdcRunID[143], tdcSpillID[143], tdcROC[143], tdcBoardID[143], tdcChannelID[143], tdcStopTime[143], tdcSignalWidth[143], tdcVmeTime[143],
-	tdcCodaID[144], tdcRunID[144], tdcSpillID[144], tdcROC[144], tdcBoardID[144], tdcChannelID[144], tdcStopTime[144], tdcSignalWidth[144], tdcVmeTime[144],
-	tdcCodaID[145], tdcRunID[145], tdcSpillID[145], tdcROC[145], tdcBoardID[145], tdcChannelID[145], tdcStopTime[145], tdcSignalWidth[145], tdcVmeTime[145],
-	tdcCodaID[146], tdcRunID[146], tdcSpillID[146], tdcROC[146], tdcBoardID[146], tdcChannelID[146], tdcStopTime[146], tdcSignalWidth[146], tdcVmeTime[146],
-	tdcCodaID[147], tdcRunID[147], tdcSpillID[147], tdcROC[147], tdcBoardID[147], tdcChannelID[147], tdcStopTime[147], tdcSignalWidth[147], tdcVmeTime[147],
-	tdcCodaID[148], tdcRunID[148], tdcSpillID[148], tdcROC[148], tdcBoardID[148], tdcChannelID[148], tdcStopTime[148], tdcSignalWidth[148], tdcVmeTime[148],
-	tdcCodaID[149], tdcRunID[149], tdcSpillID[149], tdcROC[149], tdcBoardID[149], tdcChannelID[149], tdcStopTime[149], tdcSignalWidth[149], tdcVmeTime[149],
-	tdcCodaID[150], tdcRunID[150], tdcSpillID[150], tdcROC[150], tdcBoardID[150], tdcChannelID[150], tdcStopTime[150], tdcSignalWidth[150], tdcVmeTime[150],
-	tdcCodaID[151], tdcRunID[151], tdcSpillID[151], tdcROC[151], tdcBoardID[151], tdcChannelID[151], tdcStopTime[151], tdcSignalWidth[151], tdcVmeTime[151],
-	tdcCodaID[152], tdcRunID[152], tdcSpillID[152], tdcROC[152], tdcBoardID[152], tdcChannelID[152], tdcStopTime[152], tdcSignalWidth[152], tdcVmeTime[152],
-	tdcCodaID[153], tdcRunID[153], tdcSpillID[153], tdcROC[153], tdcBoardID[153], tdcChannelID[153], tdcStopTime[153], tdcSignalWidth[153], tdcVmeTime[153],
-	tdcCodaID[154], tdcRunID[154], tdcSpillID[154], tdcROC[154], tdcBoardID[154], tdcChannelID[154], tdcStopTime[154], tdcSignalWidth[154], tdcVmeTime[154],
-	tdcCodaID[155], tdcRunID[155], tdcSpillID[155], tdcROC[155], tdcBoardID[155], tdcChannelID[155], tdcStopTime[155], tdcSignalWidth[155], tdcVmeTime[155],
-	tdcCodaID[156], tdcRunID[156], tdcSpillID[156], tdcROC[156], tdcBoardID[156], tdcChannelID[156], tdcStopTime[156], tdcSignalWidth[156], tdcVmeTime[156],
-	tdcCodaID[157], tdcRunID[157], tdcSpillID[157], tdcROC[157], tdcBoardID[157], tdcChannelID[157], tdcStopTime[157], tdcSignalWidth[157], tdcVmeTime[157],
-	tdcCodaID[158], tdcRunID[158], tdcSpillID[158], tdcROC[158], tdcBoardID[158], tdcChannelID[158], tdcStopTime[158], tdcSignalWidth[158], tdcVmeTime[158],
-	tdcCodaID[159], tdcRunID[159], tdcSpillID[159], tdcROC[159], tdcBoardID[159], tdcChannelID[159], tdcStopTime[159], tdcSignalWidth[159], tdcVmeTime[159],
-	tdcCodaID[160], tdcRunID[160], tdcSpillID[160], tdcROC[160], tdcBoardID[160], tdcChannelID[160], tdcStopTime[160], tdcSignalWidth[160], tdcVmeTime[160],
-	tdcCodaID[161], tdcRunID[161], tdcSpillID[161], tdcROC[161], tdcBoardID[161], tdcChannelID[161], tdcStopTime[161], tdcSignalWidth[161], tdcVmeTime[161],
-	tdcCodaID[162], tdcRunID[162], tdcSpillID[162], tdcROC[162], tdcBoardID[162], tdcChannelID[162], tdcStopTime[162], tdcSignalWidth[162], tdcVmeTime[162],
-	tdcCodaID[163], tdcRunID[163], tdcSpillID[163], tdcROC[163], tdcBoardID[163], tdcChannelID[163], tdcStopTime[163], tdcSignalWidth[163], tdcVmeTime[163],
-	tdcCodaID[164], tdcRunID[164], tdcSpillID[164], tdcROC[164], tdcBoardID[164], tdcChannelID[164], tdcStopTime[164], tdcSignalWidth[164], tdcVmeTime[164],
-	tdcCodaID[165], tdcRunID[165], tdcSpillID[165], tdcROC[165], tdcBoardID[165], tdcChannelID[165], tdcStopTime[165], tdcSignalWidth[165], tdcVmeTime[165],
-	tdcCodaID[166], tdcRunID[166], tdcSpillID[166], tdcROC[166], tdcBoardID[166], tdcChannelID[166], tdcStopTime[166], tdcSignalWidth[166], tdcVmeTime[166],
-	tdcCodaID[167], tdcRunID[167], tdcSpillID[167], tdcROC[167], tdcBoardID[167], tdcChannelID[167], tdcStopTime[167], tdcSignalWidth[167], tdcVmeTime[167],
-	tdcCodaID[168], tdcRunID[168], tdcSpillID[168], tdcROC[168], tdcBoardID[168], tdcChannelID[168], tdcStopTime[168], tdcSignalWidth[168], tdcVmeTime[168],
-	tdcCodaID[169], tdcRunID[169], tdcSpillID[169], tdcROC[169], tdcBoardID[169], tdcChannelID[169], tdcStopTime[169], tdcSignalWidth[169], tdcVmeTime[169],
-	tdcCodaID[170], tdcRunID[170], tdcSpillID[170], tdcROC[170], tdcBoardID[170], tdcChannelID[170], tdcStopTime[170], tdcSignalWidth[170], tdcVmeTime[170],
-	tdcCodaID[171], tdcRunID[171], tdcSpillID[171], tdcROC[171], tdcBoardID[171], tdcChannelID[171], tdcStopTime[171], tdcSignalWidth[171], tdcVmeTime[171],
-	tdcCodaID[172], tdcRunID[172], tdcSpillID[172], tdcROC[172], tdcBoardID[172], tdcChannelID[172], tdcStopTime[172], tdcSignalWidth[172], tdcVmeTime[172],
-	tdcCodaID[173], tdcRunID[173], tdcSpillID[173], tdcROC[173], tdcBoardID[173], tdcChannelID[173], tdcStopTime[173], tdcSignalWidth[173], tdcVmeTime[173],
-	tdcCodaID[174], tdcRunID[174], tdcSpillID[174], tdcROC[174], tdcBoardID[174], tdcChannelID[174], tdcStopTime[174], tdcSignalWidth[174], tdcVmeTime[174],
-	tdcCodaID[175], tdcRunID[175], tdcSpillID[175], tdcROC[175], tdcBoardID[175], tdcChannelID[175], tdcStopTime[175], tdcSignalWidth[175], tdcVmeTime[175],
-	tdcCodaID[176], tdcRunID[176], tdcSpillID[176], tdcROC[176], tdcBoardID[176], tdcChannelID[176], tdcStopTime[176], tdcSignalWidth[176], tdcVmeTime[176],
-	tdcCodaID[177], tdcRunID[177], tdcSpillID[177], tdcROC[177], tdcBoardID[177], tdcChannelID[177], tdcStopTime[177], tdcSignalWidth[177], tdcVmeTime[177],
-	tdcCodaID[178], tdcRunID[178], tdcSpillID[178], tdcROC[178], tdcBoardID[178], tdcChannelID[178], tdcStopTime[178], tdcSignalWidth[178], tdcVmeTime[178],
-	tdcCodaID[179], tdcRunID[179], tdcSpillID[179], tdcROC[179], tdcBoardID[179], tdcChannelID[179], tdcStopTime[179], tdcSignalWidth[179], tdcVmeTime[179],
-	tdcCodaID[180], tdcRunID[180], tdcSpillID[180], tdcROC[180], tdcBoardID[180], tdcChannelID[180], tdcStopTime[180], tdcSignalWidth[180], tdcVmeTime[180],
-	tdcCodaID[181], tdcRunID[181], tdcSpillID[181], tdcROC[181], tdcBoardID[181], tdcChannelID[181], tdcStopTime[181], tdcSignalWidth[181], tdcVmeTime[181],
-	tdcCodaID[182], tdcRunID[182], tdcSpillID[182], tdcROC[182], tdcBoardID[182], tdcChannelID[182], tdcStopTime[182], tdcSignalWidth[182], tdcVmeTime[182],
-	tdcCodaID[183], tdcRunID[183], tdcSpillID[183], tdcROC[183], tdcBoardID[183], tdcChannelID[183], tdcStopTime[183], tdcSignalWidth[183], tdcVmeTime[183],
-	tdcCodaID[184], tdcRunID[184], tdcSpillID[184], tdcROC[184], tdcBoardID[184], tdcChannelID[184], tdcStopTime[184], tdcSignalWidth[184], tdcVmeTime[184],
-	tdcCodaID[185], tdcRunID[185], tdcSpillID[185], tdcROC[185], tdcBoardID[185], tdcChannelID[185], tdcStopTime[185], tdcSignalWidth[185], tdcVmeTime[185],
-	tdcCodaID[186], tdcRunID[186], tdcSpillID[186], tdcROC[186], tdcBoardID[186], tdcChannelID[186], tdcStopTime[186], tdcSignalWidth[186], tdcVmeTime[186],
-	tdcCodaID[187], tdcRunID[187], tdcSpillID[187], tdcROC[187], tdcBoardID[187], tdcChannelID[187], tdcStopTime[187], tdcSignalWidth[187], tdcVmeTime[187],
-	tdcCodaID[188], tdcRunID[188], tdcSpillID[188], tdcROC[188], tdcBoardID[188], tdcChannelID[188], tdcStopTime[188], tdcSignalWidth[188], tdcVmeTime[188],
-	tdcCodaID[189], tdcRunID[189], tdcSpillID[189], tdcROC[189], tdcBoardID[189], tdcChannelID[189], tdcStopTime[189], tdcSignalWidth[189], tdcVmeTime[189],
-	tdcCodaID[190], tdcRunID[190], tdcSpillID[190], tdcROC[190], tdcBoardID[190], tdcChannelID[190], tdcStopTime[190], tdcSignalWidth[190], tdcVmeTime[190],
-	tdcCodaID[191], tdcRunID[191], tdcSpillID[191], tdcROC[191], tdcBoardID[191], tdcChannelID[191], tdcStopTime[191], tdcSignalWidth[191], tdcVmeTime[191],
-	tdcCodaID[192], tdcRunID[192], tdcSpillID[192], tdcROC[192], tdcBoardID[192], tdcChannelID[192], tdcStopTime[192], tdcSignalWidth[192], tdcVmeTime[192],
-	tdcCodaID[193], tdcRunID[193], tdcSpillID[193], tdcROC[193], tdcBoardID[193], tdcChannelID[193], tdcStopTime[193], tdcSignalWidth[193], tdcVmeTime[193],
-	tdcCodaID[194], tdcRunID[194], tdcSpillID[194], tdcROC[194], tdcBoardID[194], tdcChannelID[194], tdcStopTime[194], tdcSignalWidth[194], tdcVmeTime[194],
-	tdcCodaID[195], tdcRunID[195], tdcSpillID[195], tdcROC[195], tdcBoardID[195], tdcChannelID[195], tdcStopTime[195], tdcSignalWidth[195], tdcVmeTime[195],
-	tdcCodaID[196], tdcRunID[196], tdcSpillID[196], tdcROC[196], tdcBoardID[196], tdcChannelID[196], tdcStopTime[196], tdcSignalWidth[196], tdcVmeTime[196],
-	tdcCodaID[197], tdcRunID[197], tdcSpillID[197], tdcROC[197], tdcBoardID[197], tdcChannelID[197], tdcStopTime[197], tdcSignalWidth[197], tdcVmeTime[197],
-	tdcCodaID[198], tdcRunID[198], tdcSpillID[198], tdcROC[198], tdcBoardID[198], tdcChannelID[198], tdcStopTime[198], tdcSignalWidth[198], tdcVmeTime[198],
-	tdcCodaID[199], tdcRunID[199], tdcSpillID[199], tdcROC[199], tdcBoardID[199], tdcChannelID[199], tdcStopTime[199], tdcSignalWidth[199], tdcVmeTime[199]);
+	sprintf(outputFileName,".tdc.%i.temp", pid);
+	
+	// Open the temp file 
+	if (file_exists(outputFileName)) remove(outputFileName);
+	fp = fopen(outputFileName,"w");
 
-	if (mysql_query(conn, sqlTDCQuery))
+	if (fp == NULL) {
+  		fprintf(stderr, "Can't open output file %s!\n",
+          		outputFileName);
+		// sprintf(text, "");
+  		exit(1);
+	}
+
+	for(k=0;k<200;k++){
+		fprintf(fp, "%i %i %i %i %i %i \\N \\N \\N %i \\N %i %i\n", tdcRunID[k], tdcSpillID[k], tdcCodaID[k], tdcROC[k], 
+			tdcBoardID[k], tdcChannelID[k], tdcStopTime[k], tdcSignalWidth[k], tdcVmeTime[k]);
+	}
+
+	// File MUST be closed before it can be loaded into MySQL
+	fclose(fp);
+
+	// Grabs the current working directory so we know where to get the file from
+	if (getcwd(cwd, sizeof(cwd)) == NULL)
+        {
+		perror("getcwd() error");
+		return 1;
+	}
+	
+	// Assemble the MySQL query to load the file into the server.
+	// 	The LOCAL means the file is on the local machine
+	//	The IGNORE 2 LINES skips the date and list of field names and goes
+	//		right to the values.
+	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s/%s' INTO TABLE tempTDC "
+			"FIELDS TERMINATED BY ' ' LINES TERMINATED BY '\\n'", cwd, outputFileName);
+
+	// Submit the query to the server	
+	if(mysql_query(conn, qryString))
 	{
-		printf("Error (100): %s\n%s", mysql_error(conn), sqlTDCQuery);
+		printf("%s\n", qryString);
+		printf("Error: %s\n", mysql_error(conn));
+		return 1;
+	}
+
+	if( mysql_warning_count(conn) > 0 )
+	{
+		printf("Warnings have occured from the Hit upload:\n");
+		showWarnings(conn);
+	}
+
+	remove(outputFileName);
+*/
+	
+	mysql_stmt_bind_param(hitStmt, hitBind);
+
+	if (mysql_stmt_execute(hitStmt))
+    	{
+		printf("INSERT Error: %s\n", mysql_stmt_error(hitStmt));
+		printf("Error: %s\n", mysql_error(conn));
 		return 1;
 	}
 
@@ -2565,13 +2530,14 @@ int make_tdc_query(MYSQL* conn){
 	memset((void*)&tdcSpillID, 0, sizeof(int)*max_tdc_rows);
 	memset((void*)&tdcROC, 0, sizeof(int)*max_tdc_rows);
 	memset((void*)&tdcBoardID, 0, sizeof(int)*max_tdc_rows);
-	memset((void*)&tdcStopTime, 0, sizeof(double)*max_tdc_rows);
-	memset((void*)&tdcSignalWidth, 0, sizeof(double)*max_tdc_rows);
-	memset((void*)&tdcVmeTime, 0, sizeof(double)*max_tdc_rows);
+	memset((void*)&tdcStopTime, 0, sizeof(int)*max_tdc_rows);
+	memset((void*)&tdcSignalWidth, 0, sizeof(int)*max_tdc_rows);
+	memset((void*)&tdcVmeTime, 0, sizeof(int)*max_tdc_rows);
 
 	// Clear the query string
-	sprintf(sqlTDCQuery,"");
-	
+	//sprintf(sqlTDCQuery,"");
+
+
 	if (mysql_query(conn, "UPDATE tempTDC t, calmap.Mapping m\n"
                 "SET t.detectorName = m.detectorName, "
                 "t.elementID = m.elementID\n"
@@ -2597,7 +2563,7 @@ int make_tdc_query(MYSQL* conn){
 		printf("Error (102): %s\n", mysql_error(conn));
                 return 1;
         }
-
+	
 	if (mysql_query(conn, "DELETE FROM tempTDC") )
 	{
 		printf("Error (103): %s\n", mysql_error(conn));
@@ -2610,286 +2576,16 @@ int make_tdc_query(MYSQL* conn){
 
 int make_v1495_query(MYSQL* conn){
 
-	char sqlv1495Query[100000];
-
 	if( mysql_query(conn, "DELETE FROM tempv1495") ) {
 		printf("Error: %s\n", mysql_error(conn));
    	}
 
-	sprintf(sqlv1495Query, "INSERT INTO tempv1495 (eventID, runID, spillID, rocID, boardID, channelID, tdcTime, vmeTime) "
-	"VALUES (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
-	"(%i, %i, %i, %i, %i, %i, %f, %f)",
-	v1495CodaID[0], v1495RunID[0], v1495SpillID[0], v1495ROC[0], v1495BoardID[0], v1495ChannelID[0], v1495StopTime[0], v1495VmeTime[0],
-	v1495CodaID[1], v1495RunID[1], v1495SpillID[1], v1495ROC[1], v1495BoardID[1], v1495ChannelID[1], v1495StopTime[1], v1495VmeTime[1],
-	v1495CodaID[2], v1495RunID[2], v1495SpillID[2], v1495ROC[2], v1495BoardID[2], v1495ChannelID[2], v1495StopTime[2], v1495VmeTime[2],
-	v1495CodaID[3], v1495RunID[3], v1495SpillID[3], v1495ROC[3], v1495BoardID[3], v1495ChannelID[3], v1495StopTime[3], v1495VmeTime[3],
-	v1495CodaID[4], v1495RunID[4], v1495SpillID[4], v1495ROC[4], v1495BoardID[4], v1495ChannelID[4], v1495StopTime[4], v1495VmeTime[4],
-	v1495CodaID[5], v1495RunID[5], v1495SpillID[5], v1495ROC[5], v1495BoardID[5], v1495ChannelID[5], v1495StopTime[5], v1495VmeTime[5],
-	v1495CodaID[6], v1495RunID[6], v1495SpillID[6], v1495ROC[6], v1495BoardID[6], v1495ChannelID[6], v1495StopTime[6], v1495VmeTime[6],
-	v1495CodaID[7], v1495RunID[7], v1495SpillID[7], v1495ROC[7], v1495BoardID[7], v1495ChannelID[7], v1495StopTime[7], v1495VmeTime[7],
-	v1495CodaID[8], v1495RunID[8], v1495SpillID[8], v1495ROC[8], v1495BoardID[8], v1495ChannelID[8], v1495StopTime[8], v1495VmeTime[8],
-	v1495CodaID[9], v1495RunID[9], v1495SpillID[9], v1495ROC[9], v1495BoardID[9], v1495ChannelID[9], v1495StopTime[9], v1495VmeTime[9],
-	v1495CodaID[10], v1495RunID[10], v1495SpillID[10], v1495ROC[10], v1495BoardID[10], v1495ChannelID[10], v1495StopTime[10], v1495VmeTime[10],
-	v1495CodaID[11], v1495RunID[11], v1495SpillID[11], v1495ROC[11], v1495BoardID[11], v1495ChannelID[11], v1495StopTime[11], v1495VmeTime[11],
-	v1495CodaID[12], v1495RunID[12], v1495SpillID[12], v1495ROC[12], v1495BoardID[12], v1495ChannelID[12], v1495StopTime[12], v1495VmeTime[12],
-	v1495CodaID[13], v1495RunID[13], v1495SpillID[13], v1495ROC[13], v1495BoardID[13], v1495ChannelID[13], v1495StopTime[13], v1495VmeTime[13],
-	v1495CodaID[14], v1495RunID[14], v1495SpillID[14], v1495ROC[14], v1495BoardID[14], v1495ChannelID[14], v1495StopTime[14], v1495VmeTime[14],
-	v1495CodaID[15], v1495RunID[15], v1495SpillID[15], v1495ROC[15], v1495BoardID[15], v1495ChannelID[15], v1495StopTime[15], v1495VmeTime[15],
-	v1495CodaID[16], v1495RunID[16], v1495SpillID[16], v1495ROC[16], v1495BoardID[16], v1495ChannelID[16], v1495StopTime[16], v1495VmeTime[16],
-	v1495CodaID[17], v1495RunID[17], v1495SpillID[17], v1495ROC[17], v1495BoardID[17], v1495ChannelID[17], v1495StopTime[17], v1495VmeTime[17],
-	v1495CodaID[18], v1495RunID[18], v1495SpillID[18], v1495ROC[18], v1495BoardID[18], v1495ChannelID[18], v1495StopTime[18], v1495VmeTime[18],
-	v1495CodaID[19], v1495RunID[19], v1495SpillID[19], v1495ROC[19], v1495BoardID[19], v1495ChannelID[19], v1495StopTime[19], v1495VmeTime[19],
-	v1495CodaID[20], v1495RunID[20], v1495SpillID[20], v1495ROC[20], v1495BoardID[20], v1495ChannelID[20], v1495StopTime[20], v1495VmeTime[20],
-	v1495CodaID[21], v1495RunID[21], v1495SpillID[21], v1495ROC[21], v1495BoardID[21], v1495ChannelID[21], v1495StopTime[21], v1495VmeTime[21],
-	v1495CodaID[22], v1495RunID[22], v1495SpillID[22], v1495ROC[22], v1495BoardID[22], v1495ChannelID[22], v1495StopTime[22], v1495VmeTime[22],
-	v1495CodaID[23], v1495RunID[23], v1495SpillID[23], v1495ROC[23], v1495BoardID[23], v1495ChannelID[23], v1495StopTime[23], v1495VmeTime[23],
-	v1495CodaID[24], v1495RunID[24], v1495SpillID[24], v1495ROC[24], v1495BoardID[24], v1495ChannelID[24], v1495StopTime[24], v1495VmeTime[24],
-	v1495CodaID[25], v1495RunID[25], v1495SpillID[25], v1495ROC[25], v1495BoardID[25], v1495ChannelID[25], v1495StopTime[25], v1495VmeTime[25],
-	v1495CodaID[26], v1495RunID[26], v1495SpillID[26], v1495ROC[26], v1495BoardID[26], v1495ChannelID[26], v1495StopTime[26], v1495VmeTime[26],
-	v1495CodaID[27], v1495RunID[27], v1495SpillID[27], v1495ROC[27], v1495BoardID[27], v1495ChannelID[27], v1495StopTime[27], v1495VmeTime[27],
-	v1495CodaID[28], v1495RunID[28], v1495SpillID[28], v1495ROC[28], v1495BoardID[28], v1495ChannelID[28], v1495StopTime[28], v1495VmeTime[28],
-	v1495CodaID[29], v1495RunID[29], v1495SpillID[29], v1495ROC[29], v1495BoardID[29], v1495ChannelID[29], v1495StopTime[29], v1495VmeTime[29],
-	v1495CodaID[30], v1495RunID[30], v1495SpillID[30], v1495ROC[30], v1495BoardID[30], v1495ChannelID[30], v1495StopTime[30], v1495VmeTime[30],
-	v1495CodaID[31], v1495RunID[31], v1495SpillID[31], v1495ROC[31], v1495BoardID[31], v1495ChannelID[31], v1495StopTime[31], v1495VmeTime[31],
-	v1495CodaID[32], v1495RunID[32], v1495SpillID[32], v1495ROC[32], v1495BoardID[32], v1495ChannelID[32], v1495StopTime[32], v1495VmeTime[32],
-	v1495CodaID[33], v1495RunID[33], v1495SpillID[33], v1495ROC[33], v1495BoardID[33], v1495ChannelID[33], v1495StopTime[33], v1495VmeTime[33],
-	v1495CodaID[34], v1495RunID[34], v1495SpillID[34], v1495ROC[34], v1495BoardID[34], v1495ChannelID[34], v1495StopTime[34], v1495VmeTime[34],
-	v1495CodaID[35], v1495RunID[35], v1495SpillID[35], v1495ROC[35], v1495BoardID[35], v1495ChannelID[35], v1495StopTime[35], v1495VmeTime[35],
-	v1495CodaID[36], v1495RunID[36], v1495SpillID[36], v1495ROC[36], v1495BoardID[36], v1495ChannelID[36], v1495StopTime[36], v1495VmeTime[36],
-	v1495CodaID[37], v1495RunID[37], v1495SpillID[37], v1495ROC[37], v1495BoardID[37], v1495ChannelID[37], v1495StopTime[37], v1495VmeTime[37],
-	v1495CodaID[38], v1495RunID[38], v1495SpillID[38], v1495ROC[38], v1495BoardID[38], v1495ChannelID[38], v1495StopTime[38], v1495VmeTime[38],
-	v1495CodaID[39], v1495RunID[39], v1495SpillID[39], v1495ROC[39], v1495BoardID[39], v1495ChannelID[39], v1495StopTime[39], v1495VmeTime[39],
-	v1495CodaID[40], v1495RunID[40], v1495SpillID[40], v1495ROC[40], v1495BoardID[40], v1495ChannelID[40], v1495StopTime[40], v1495VmeTime[40],
-	v1495CodaID[41], v1495RunID[41], v1495SpillID[41], v1495ROC[41], v1495BoardID[41], v1495ChannelID[41], v1495StopTime[41], v1495VmeTime[41],
-	v1495CodaID[42], v1495RunID[42], v1495SpillID[42], v1495ROC[42], v1495BoardID[42], v1495ChannelID[42], v1495StopTime[42], v1495VmeTime[42],
-	v1495CodaID[43], v1495RunID[43], v1495SpillID[43], v1495ROC[43], v1495BoardID[43], v1495ChannelID[43], v1495StopTime[43], v1495VmeTime[43],
-	v1495CodaID[44], v1495RunID[44], v1495SpillID[44], v1495ROC[44], v1495BoardID[44], v1495ChannelID[44], v1495StopTime[44], v1495VmeTime[44],
-	v1495CodaID[45], v1495RunID[45], v1495SpillID[45], v1495ROC[45], v1495BoardID[45], v1495ChannelID[45], v1495StopTime[45], v1495VmeTime[45],
-	v1495CodaID[46], v1495RunID[46], v1495SpillID[46], v1495ROC[46], v1495BoardID[46], v1495ChannelID[46], v1495StopTime[46], v1495VmeTime[46],
-	v1495CodaID[47], v1495RunID[47], v1495SpillID[47], v1495ROC[47], v1495BoardID[47], v1495ChannelID[47], v1495StopTime[47], v1495VmeTime[47],
-	v1495CodaID[48], v1495RunID[48], v1495SpillID[48], v1495ROC[48], v1495BoardID[48], v1495ChannelID[48], v1495StopTime[48], v1495VmeTime[48],
-	v1495CodaID[49], v1495RunID[49], v1495SpillID[49], v1495ROC[49], v1495BoardID[49], v1495ChannelID[49], v1495StopTime[49], v1495VmeTime[49],
-	v1495CodaID[50], v1495RunID[50], v1495SpillID[50], v1495ROC[50], v1495BoardID[50], v1495ChannelID[50], v1495StopTime[50], v1495VmeTime[50],
-	v1495CodaID[51], v1495RunID[51], v1495SpillID[51], v1495ROC[51], v1495BoardID[51], v1495ChannelID[51], v1495StopTime[51], v1495VmeTime[51],
-	v1495CodaID[52], v1495RunID[52], v1495SpillID[52], v1495ROC[52], v1495BoardID[52], v1495ChannelID[52], v1495StopTime[52], v1495VmeTime[52],
-	v1495CodaID[53], v1495RunID[53], v1495SpillID[53], v1495ROC[53], v1495BoardID[53], v1495ChannelID[53], v1495StopTime[53], v1495VmeTime[53],
-	v1495CodaID[54], v1495RunID[54], v1495SpillID[54], v1495ROC[54], v1495BoardID[54], v1495ChannelID[54], v1495StopTime[54], v1495VmeTime[54],
-	v1495CodaID[55], v1495RunID[55], v1495SpillID[55], v1495ROC[55], v1495BoardID[55], v1495ChannelID[55], v1495StopTime[55], v1495VmeTime[55],
-	v1495CodaID[56], v1495RunID[56], v1495SpillID[56], v1495ROC[56], v1495BoardID[56], v1495ChannelID[56], v1495StopTime[56], v1495VmeTime[56],
-	v1495CodaID[57], v1495RunID[57], v1495SpillID[57], v1495ROC[57], v1495BoardID[57], v1495ChannelID[57], v1495StopTime[57], v1495VmeTime[57],
-	v1495CodaID[58], v1495RunID[58], v1495SpillID[58], v1495ROC[58], v1495BoardID[58], v1495ChannelID[58], v1495StopTime[58], v1495VmeTime[58],
-	v1495CodaID[59], v1495RunID[59], v1495SpillID[59], v1495ROC[59], v1495BoardID[59], v1495ChannelID[59], v1495StopTime[59], v1495VmeTime[59],
-	v1495CodaID[60], v1495RunID[60], v1495SpillID[60], v1495ROC[60], v1495BoardID[60], v1495ChannelID[60], v1495StopTime[60], v1495VmeTime[60],
-	v1495CodaID[61], v1495RunID[61], v1495SpillID[61], v1495ROC[61], v1495BoardID[61], v1495ChannelID[61], v1495StopTime[61], v1495VmeTime[61],
-	v1495CodaID[62], v1495RunID[62], v1495SpillID[62], v1495ROC[62], v1495BoardID[62], v1495ChannelID[62], v1495StopTime[62], v1495VmeTime[62],
-	v1495CodaID[63], v1495RunID[63], v1495SpillID[63], v1495ROC[63], v1495BoardID[63], v1495ChannelID[63], v1495StopTime[63], v1495VmeTime[63],
-	v1495CodaID[64], v1495RunID[64], v1495SpillID[64], v1495ROC[64], v1495BoardID[64], v1495ChannelID[64], v1495StopTime[64], v1495VmeTime[64],
-	v1495CodaID[65], v1495RunID[65], v1495SpillID[65], v1495ROC[65], v1495BoardID[65], v1495ChannelID[65], v1495StopTime[65], v1495VmeTime[65],
-	v1495CodaID[66], v1495RunID[66], v1495SpillID[66], v1495ROC[66], v1495BoardID[66], v1495ChannelID[66], v1495StopTime[66], v1495VmeTime[66],
-	v1495CodaID[67], v1495RunID[67], v1495SpillID[67], v1495ROC[67], v1495BoardID[67], v1495ChannelID[67], v1495StopTime[67], v1495VmeTime[67],
-	v1495CodaID[68], v1495RunID[68], v1495SpillID[68], v1495ROC[68], v1495BoardID[68], v1495ChannelID[68], v1495StopTime[68], v1495VmeTime[68],
-	v1495CodaID[69], v1495RunID[69], v1495SpillID[69], v1495ROC[69], v1495BoardID[69], v1495ChannelID[69], v1495StopTime[69], v1495VmeTime[69],
-	v1495CodaID[70], v1495RunID[70], v1495SpillID[70], v1495ROC[70], v1495BoardID[70], v1495ChannelID[70], v1495StopTime[70], v1495VmeTime[70],
-	v1495CodaID[71], v1495RunID[71], v1495SpillID[71], v1495ROC[71], v1495BoardID[71], v1495ChannelID[71], v1495StopTime[71], v1495VmeTime[71],
-	v1495CodaID[72], v1495RunID[72], v1495SpillID[72], v1495ROC[72], v1495BoardID[72], v1495ChannelID[72], v1495StopTime[72], v1495VmeTime[72],
-	v1495CodaID[73], v1495RunID[73], v1495SpillID[73], v1495ROC[73], v1495BoardID[73], v1495ChannelID[73], v1495StopTime[73], v1495VmeTime[73],
-	v1495CodaID[74], v1495RunID[74], v1495SpillID[74], v1495ROC[74], v1495BoardID[74], v1495ChannelID[74], v1495StopTime[74], v1495VmeTime[74],
-	v1495CodaID[75], v1495RunID[75], v1495SpillID[75], v1495ROC[75], v1495BoardID[75], v1495ChannelID[75], v1495StopTime[75], v1495VmeTime[75],
-	v1495CodaID[76], v1495RunID[76], v1495SpillID[76], v1495ROC[76], v1495BoardID[76], v1495ChannelID[76], v1495StopTime[76], v1495VmeTime[76],
-	v1495CodaID[77], v1495RunID[77], v1495SpillID[77], v1495ROC[77], v1495BoardID[77], v1495ChannelID[77], v1495StopTime[77], v1495VmeTime[77],
-	v1495CodaID[78], v1495RunID[78], v1495SpillID[78], v1495ROC[78], v1495BoardID[78], v1495ChannelID[78], v1495StopTime[78], v1495VmeTime[78],
-	v1495CodaID[79], v1495RunID[79], v1495SpillID[79], v1495ROC[79], v1495BoardID[79], v1495ChannelID[79], v1495StopTime[79], v1495VmeTime[79],
-	v1495CodaID[80], v1495RunID[80], v1495SpillID[80], v1495ROC[80], v1495BoardID[80], v1495ChannelID[80], v1495StopTime[80], v1495VmeTime[80],
-	v1495CodaID[81], v1495RunID[81], v1495SpillID[81], v1495ROC[81], v1495BoardID[81], v1495ChannelID[81], v1495StopTime[81], v1495VmeTime[81],
-	v1495CodaID[82], v1495RunID[82], v1495SpillID[82], v1495ROC[82], v1495BoardID[82], v1495ChannelID[82], v1495StopTime[82], v1495VmeTime[82],
-	v1495CodaID[83], v1495RunID[83], v1495SpillID[83], v1495ROC[83], v1495BoardID[83], v1495ChannelID[83], v1495StopTime[83], v1495VmeTime[83],
-	v1495CodaID[84], v1495RunID[84], v1495SpillID[84], v1495ROC[84], v1495BoardID[84], v1495ChannelID[84], v1495StopTime[84], v1495VmeTime[84],
-	v1495CodaID[85], v1495RunID[85], v1495SpillID[85], v1495ROC[85], v1495BoardID[85], v1495ChannelID[85], v1495StopTime[85], v1495VmeTime[85],
-	v1495CodaID[86], v1495RunID[86], v1495SpillID[86], v1495ROC[86], v1495BoardID[86], v1495ChannelID[86], v1495StopTime[86], v1495VmeTime[86],
-	v1495CodaID[87], v1495RunID[87], v1495SpillID[87], v1495ROC[87], v1495BoardID[87], v1495ChannelID[87], v1495StopTime[87], v1495VmeTime[87],
-	v1495CodaID[88], v1495RunID[88], v1495SpillID[88], v1495ROC[88], v1495BoardID[88], v1495ChannelID[88], v1495StopTime[88], v1495VmeTime[88],
-	v1495CodaID[89], v1495RunID[89], v1495SpillID[89], v1495ROC[89], v1495BoardID[89], v1495ChannelID[89], v1495StopTime[89], v1495VmeTime[89],
-	v1495CodaID[90], v1495RunID[90], v1495SpillID[90], v1495ROC[90], v1495BoardID[90], v1495ChannelID[90], v1495StopTime[90], v1495VmeTime[90],
-	v1495CodaID[91], v1495RunID[91], v1495SpillID[91], v1495ROC[91], v1495BoardID[91], v1495ChannelID[91], v1495StopTime[91], v1495VmeTime[91],
-	v1495CodaID[92], v1495RunID[92], v1495SpillID[92], v1495ROC[92], v1495BoardID[92], v1495ChannelID[92], v1495StopTime[92], v1495VmeTime[92],
-	v1495CodaID[93], v1495RunID[93], v1495SpillID[93], v1495ROC[93], v1495BoardID[93], v1495ChannelID[93], v1495StopTime[93], v1495VmeTime[93],
-	v1495CodaID[94], v1495RunID[94], v1495SpillID[94], v1495ROC[94], v1495BoardID[94], v1495ChannelID[94], v1495StopTime[94], v1495VmeTime[94],
-	v1495CodaID[95], v1495RunID[95], v1495SpillID[95], v1495ROC[95], v1495BoardID[95], v1495ChannelID[95], v1495StopTime[95], v1495VmeTime[95],
-	v1495CodaID[96], v1495RunID[96], v1495SpillID[96], v1495ROC[96], v1495BoardID[96], v1495ChannelID[96], v1495StopTime[96], v1495VmeTime[96],
-	v1495CodaID[97], v1495RunID[97], v1495SpillID[97], v1495ROC[97], v1495BoardID[97], v1495ChannelID[97], v1495StopTime[97], v1495VmeTime[97],
-	v1495CodaID[98], v1495RunID[98], v1495SpillID[98], v1495ROC[98], v1495BoardID[98], v1495ChannelID[98], v1495StopTime[98], v1495VmeTime[98],
-	v1495CodaID[99], v1495RunID[99], v1495SpillID[99], v1495ROC[99], v1495BoardID[99], v1495ChannelID[99], v1495StopTime[99], v1495VmeTime[99],
-	v1495CodaID[100], v1495RunID[100], v1495SpillID[100], v1495ROC[100], v1495BoardID[100], v1495ChannelID[100], v1495StopTime[100], v1495VmeTime[100],
-	v1495CodaID[101], v1495RunID[101], v1495SpillID[101], v1495ROC[101], v1495BoardID[101], v1495ChannelID[101], v1495StopTime[101], v1495VmeTime[101],
-	v1495CodaID[102], v1495RunID[102], v1495SpillID[102], v1495ROC[102], v1495BoardID[102], v1495ChannelID[102], v1495StopTime[102], v1495VmeTime[102],
-	v1495CodaID[103], v1495RunID[103], v1495SpillID[103], v1495ROC[103], v1495BoardID[103], v1495ChannelID[103], v1495StopTime[103], v1495VmeTime[103],
-	v1495CodaID[104], v1495RunID[104], v1495SpillID[104], v1495ROC[104], v1495BoardID[104], v1495ChannelID[104], v1495StopTime[104], v1495VmeTime[104],
-	v1495CodaID[105], v1495RunID[105], v1495SpillID[105], v1495ROC[105], v1495BoardID[105], v1495ChannelID[105], v1495StopTime[105], v1495VmeTime[105],
-	v1495CodaID[106], v1495RunID[106], v1495SpillID[106], v1495ROC[106], v1495BoardID[106], v1495ChannelID[106], v1495StopTime[106], v1495VmeTime[106],
-	v1495CodaID[107], v1495RunID[107], v1495SpillID[107], v1495ROC[107], v1495BoardID[107], v1495ChannelID[107], v1495StopTime[107], v1495VmeTime[107],
-	v1495CodaID[108], v1495RunID[108], v1495SpillID[108], v1495ROC[108], v1495BoardID[108], v1495ChannelID[108], v1495StopTime[108], v1495VmeTime[108],
-	v1495CodaID[109], v1495RunID[109], v1495SpillID[109], v1495ROC[109], v1495BoardID[109], v1495ChannelID[109], v1495StopTime[109], v1495VmeTime[109],
-	v1495CodaID[110], v1495RunID[110], v1495SpillID[110], v1495ROC[110], v1495BoardID[110], v1495ChannelID[110], v1495StopTime[110], v1495VmeTime[110],
-	v1495CodaID[111], v1495RunID[111], v1495SpillID[111], v1495ROC[111], v1495BoardID[111], v1495ChannelID[111], v1495StopTime[111], v1495VmeTime[111],
-	v1495CodaID[112], v1495RunID[112], v1495SpillID[112], v1495ROC[112], v1495BoardID[112], v1495ChannelID[112], v1495StopTime[112], v1495VmeTime[112],
-	v1495CodaID[113], v1495RunID[113], v1495SpillID[113], v1495ROC[113], v1495BoardID[113], v1495ChannelID[113], v1495StopTime[113], v1495VmeTime[113],
-	v1495CodaID[114], v1495RunID[114], v1495SpillID[114], v1495ROC[114], v1495BoardID[114], v1495ChannelID[114], v1495StopTime[114], v1495VmeTime[114],
-	v1495CodaID[115], v1495RunID[115], v1495SpillID[115], v1495ROC[115], v1495BoardID[115], v1495ChannelID[115], v1495StopTime[115], v1495VmeTime[115],
-	v1495CodaID[116], v1495RunID[116], v1495SpillID[116], v1495ROC[116], v1495BoardID[116], v1495ChannelID[116], v1495StopTime[116], v1495VmeTime[116],
-	v1495CodaID[117], v1495RunID[117], v1495SpillID[117], v1495ROC[117], v1495BoardID[117], v1495ChannelID[117], v1495StopTime[117], v1495VmeTime[117],
-	v1495CodaID[118], v1495RunID[118], v1495SpillID[118], v1495ROC[118], v1495BoardID[118], v1495ChannelID[118], v1495StopTime[118], v1495VmeTime[118],
-	v1495CodaID[119], v1495RunID[119], v1495SpillID[119], v1495ROC[119], v1495BoardID[119], v1495ChannelID[119], v1495StopTime[119], v1495VmeTime[119],
-	v1495CodaID[120], v1495RunID[120], v1495SpillID[120], v1495ROC[120], v1495BoardID[120], v1495ChannelID[120], v1495StopTime[120], v1495VmeTime[120],
-	v1495CodaID[121], v1495RunID[121], v1495SpillID[121], v1495ROC[121], v1495BoardID[121], v1495ChannelID[121], v1495StopTime[121], v1495VmeTime[121],
-	v1495CodaID[122], v1495RunID[122], v1495SpillID[122], v1495ROC[122], v1495BoardID[122], v1495ChannelID[122], v1495StopTime[122], v1495VmeTime[122],
-	v1495CodaID[123], v1495RunID[123], v1495SpillID[123], v1495ROC[123], v1495BoardID[123], v1495ChannelID[123], v1495StopTime[123], v1495VmeTime[123],
-	v1495CodaID[124], v1495RunID[124], v1495SpillID[124], v1495ROC[124], v1495BoardID[124], v1495ChannelID[124], v1495StopTime[124], v1495VmeTime[124],
-	v1495CodaID[125], v1495RunID[125], v1495SpillID[125], v1495ROC[125], v1495BoardID[125], v1495ChannelID[125], v1495StopTime[125], v1495VmeTime[125],
-	v1495CodaID[126], v1495RunID[126], v1495SpillID[126], v1495ROC[126], v1495BoardID[126], v1495ChannelID[126], v1495StopTime[126], v1495VmeTime[126],
-	v1495CodaID[127], v1495RunID[127], v1495SpillID[127], v1495ROC[127], v1495BoardID[127], v1495ChannelID[127], v1495StopTime[127], v1495VmeTime[127],
-	v1495CodaID[128], v1495RunID[128], v1495SpillID[128], v1495ROC[128], v1495BoardID[128], v1495ChannelID[128], v1495StopTime[128], v1495VmeTime[128],
-	v1495CodaID[129], v1495RunID[129], v1495SpillID[129], v1495ROC[129], v1495BoardID[129], v1495ChannelID[129], v1495StopTime[129], v1495VmeTime[129],
-	v1495CodaID[130], v1495RunID[130], v1495SpillID[130], v1495ROC[130], v1495BoardID[130], v1495ChannelID[130], v1495StopTime[130], v1495VmeTime[130],
-	v1495CodaID[131], v1495RunID[131], v1495SpillID[131], v1495ROC[131], v1495BoardID[131], v1495ChannelID[131], v1495StopTime[131], v1495VmeTime[131],
-	v1495CodaID[132], v1495RunID[132], v1495SpillID[132], v1495ROC[132], v1495BoardID[132], v1495ChannelID[132], v1495StopTime[132], v1495VmeTime[132],
-	v1495CodaID[133], v1495RunID[133], v1495SpillID[133], v1495ROC[133], v1495BoardID[133], v1495ChannelID[133], v1495StopTime[133], v1495VmeTime[133],
-	v1495CodaID[134], v1495RunID[134], v1495SpillID[134], v1495ROC[134], v1495BoardID[134], v1495ChannelID[134], v1495StopTime[134], v1495VmeTime[134],
-	v1495CodaID[135], v1495RunID[135], v1495SpillID[135], v1495ROC[135], v1495BoardID[135], v1495ChannelID[135], v1495StopTime[135], v1495VmeTime[135],
-	v1495CodaID[136], v1495RunID[136], v1495SpillID[136], v1495ROC[136], v1495BoardID[136], v1495ChannelID[136], v1495StopTime[136], v1495VmeTime[136],
-	v1495CodaID[137], v1495RunID[137], v1495SpillID[137], v1495ROC[137], v1495BoardID[137], v1495ChannelID[137], v1495StopTime[137], v1495VmeTime[137],
-	v1495CodaID[138], v1495RunID[138], v1495SpillID[138], v1495ROC[138], v1495BoardID[138], v1495ChannelID[138], v1495StopTime[138], v1495VmeTime[138],
-	v1495CodaID[139], v1495RunID[139], v1495SpillID[139], v1495ROC[139], v1495BoardID[139], v1495ChannelID[139], v1495StopTime[139], v1495VmeTime[139],
-	v1495CodaID[140], v1495RunID[140], v1495SpillID[140], v1495ROC[140], v1495BoardID[140], v1495ChannelID[140], v1495StopTime[140], v1495VmeTime[140],
-	v1495CodaID[141], v1495RunID[141], v1495SpillID[141], v1495ROC[141], v1495BoardID[141], v1495ChannelID[141], v1495StopTime[141], v1495VmeTime[141],
-	v1495CodaID[142], v1495RunID[142], v1495SpillID[142], v1495ROC[142], v1495BoardID[142], v1495ChannelID[142], v1495StopTime[142], v1495VmeTime[142],
-	v1495CodaID[143], v1495RunID[143], v1495SpillID[143], v1495ROC[143], v1495BoardID[143], v1495ChannelID[143], v1495StopTime[143], v1495VmeTime[143],
-	v1495CodaID[144], v1495RunID[144], v1495SpillID[144], v1495ROC[144], v1495BoardID[144], v1495ChannelID[144], v1495StopTime[144], v1495VmeTime[144],
-	v1495CodaID[145], v1495RunID[145], v1495SpillID[145], v1495ROC[145], v1495BoardID[145], v1495ChannelID[145], v1495StopTime[145], v1495VmeTime[145],
-	v1495CodaID[146], v1495RunID[146], v1495SpillID[146], v1495ROC[146], v1495BoardID[146], v1495ChannelID[146], v1495StopTime[146], v1495VmeTime[146],
-	v1495CodaID[147], v1495RunID[147], v1495SpillID[147], v1495ROC[147], v1495BoardID[147], v1495ChannelID[147], v1495StopTime[147], v1495VmeTime[147],
-	v1495CodaID[148], v1495RunID[148], v1495SpillID[148], v1495ROC[148], v1495BoardID[148], v1495ChannelID[148], v1495StopTime[148], v1495VmeTime[148],
-	v1495CodaID[149], v1495RunID[149], v1495SpillID[149], v1495ROC[149], v1495BoardID[149], v1495ChannelID[149], v1495StopTime[149], v1495VmeTime[149],
-	v1495CodaID[150], v1495RunID[150], v1495SpillID[150], v1495ROC[150], v1495BoardID[150], v1495ChannelID[150], v1495StopTime[150], v1495VmeTime[150],
-	v1495CodaID[151], v1495RunID[151], v1495SpillID[151], v1495ROC[151], v1495BoardID[151], v1495ChannelID[151], v1495StopTime[151], v1495VmeTime[151],
-	v1495CodaID[152], v1495RunID[152], v1495SpillID[152], v1495ROC[152], v1495BoardID[152], v1495ChannelID[152], v1495StopTime[152], v1495VmeTime[152],
-	v1495CodaID[153], v1495RunID[153], v1495SpillID[153], v1495ROC[153], v1495BoardID[153], v1495ChannelID[153], v1495StopTime[153], v1495VmeTime[153],
-	v1495CodaID[154], v1495RunID[154], v1495SpillID[154], v1495ROC[154], v1495BoardID[154], v1495ChannelID[154], v1495StopTime[154], v1495VmeTime[154],
-	v1495CodaID[155], v1495RunID[155], v1495SpillID[155], v1495ROC[155], v1495BoardID[155], v1495ChannelID[155], v1495StopTime[155], v1495VmeTime[155],
-	v1495CodaID[156], v1495RunID[156], v1495SpillID[156], v1495ROC[156], v1495BoardID[156], v1495ChannelID[156], v1495StopTime[156], v1495VmeTime[156],
-	v1495CodaID[157], v1495RunID[157], v1495SpillID[157], v1495ROC[157], v1495BoardID[157], v1495ChannelID[157], v1495StopTime[157], v1495VmeTime[157],
-	v1495CodaID[158], v1495RunID[158], v1495SpillID[158], v1495ROC[158], v1495BoardID[158], v1495ChannelID[158], v1495StopTime[158], v1495VmeTime[158],
-	v1495CodaID[159], v1495RunID[159], v1495SpillID[159], v1495ROC[159], v1495BoardID[159], v1495ChannelID[159], v1495StopTime[159], v1495VmeTime[159],
-	v1495CodaID[160], v1495RunID[160], v1495SpillID[160], v1495ROC[160], v1495BoardID[160], v1495ChannelID[160], v1495StopTime[160], v1495VmeTime[160],
-	v1495CodaID[161], v1495RunID[161], v1495SpillID[161], v1495ROC[161], v1495BoardID[161], v1495ChannelID[161], v1495StopTime[161], v1495VmeTime[161],
-	v1495CodaID[162], v1495RunID[162], v1495SpillID[162], v1495ROC[162], v1495BoardID[162], v1495ChannelID[162], v1495StopTime[162], v1495VmeTime[162],
-	v1495CodaID[163], v1495RunID[163], v1495SpillID[163], v1495ROC[163], v1495BoardID[163], v1495ChannelID[163], v1495StopTime[163], v1495VmeTime[163],
-	v1495CodaID[164], v1495RunID[164], v1495SpillID[164], v1495ROC[164], v1495BoardID[164], v1495ChannelID[164], v1495StopTime[164], v1495VmeTime[164],
-	v1495CodaID[165], v1495RunID[165], v1495SpillID[165], v1495ROC[165], v1495BoardID[165], v1495ChannelID[165], v1495StopTime[165], v1495VmeTime[165],
-	v1495CodaID[166], v1495RunID[166], v1495SpillID[166], v1495ROC[166], v1495BoardID[166], v1495ChannelID[166], v1495StopTime[166], v1495VmeTime[166],
-	v1495CodaID[167], v1495RunID[167], v1495SpillID[167], v1495ROC[167], v1495BoardID[167], v1495ChannelID[167], v1495StopTime[167], v1495VmeTime[167],
-	v1495CodaID[168], v1495RunID[168], v1495SpillID[168], v1495ROC[168], v1495BoardID[168], v1495ChannelID[168], v1495StopTime[168], v1495VmeTime[168],
-	v1495CodaID[169], v1495RunID[169], v1495SpillID[169], v1495ROC[169], v1495BoardID[169], v1495ChannelID[169], v1495StopTime[169], v1495VmeTime[169],
-	v1495CodaID[170], v1495RunID[170], v1495SpillID[170], v1495ROC[170], v1495BoardID[170], v1495ChannelID[170], v1495StopTime[170], v1495VmeTime[170],
-	v1495CodaID[171], v1495RunID[171], v1495SpillID[171], v1495ROC[171], v1495BoardID[171], v1495ChannelID[171], v1495StopTime[171], v1495VmeTime[171],
-	v1495CodaID[172], v1495RunID[172], v1495SpillID[172], v1495ROC[172], v1495BoardID[172], v1495ChannelID[172], v1495StopTime[172], v1495VmeTime[172],
-	v1495CodaID[173], v1495RunID[173], v1495SpillID[173], v1495ROC[173], v1495BoardID[173], v1495ChannelID[173], v1495StopTime[173], v1495VmeTime[173],
-	v1495CodaID[174], v1495RunID[174], v1495SpillID[174], v1495ROC[174], v1495BoardID[174], v1495ChannelID[174], v1495StopTime[174], v1495VmeTime[174],
-	v1495CodaID[175], v1495RunID[175], v1495SpillID[175], v1495ROC[175], v1495BoardID[175], v1495ChannelID[175], v1495StopTime[175], v1495VmeTime[175],
-	v1495CodaID[176], v1495RunID[176], v1495SpillID[176], v1495ROC[176], v1495BoardID[176], v1495ChannelID[176], v1495StopTime[176], v1495VmeTime[176],
-	v1495CodaID[177], v1495RunID[177], v1495SpillID[177], v1495ROC[177], v1495BoardID[177], v1495ChannelID[177], v1495StopTime[177], v1495VmeTime[177],
-	v1495CodaID[178], v1495RunID[178], v1495SpillID[178], v1495ROC[178], v1495BoardID[178], v1495ChannelID[178], v1495StopTime[178], v1495VmeTime[178],
-	v1495CodaID[179], v1495RunID[179], v1495SpillID[179], v1495ROC[179], v1495BoardID[179], v1495ChannelID[179], v1495StopTime[179], v1495VmeTime[179],
-	v1495CodaID[180], v1495RunID[180], v1495SpillID[180], v1495ROC[180], v1495BoardID[180], v1495ChannelID[180], v1495StopTime[180], v1495VmeTime[180],
-	v1495CodaID[181], v1495RunID[181], v1495SpillID[181], v1495ROC[181], v1495BoardID[181], v1495ChannelID[181], v1495StopTime[181], v1495VmeTime[181],
-	v1495CodaID[182], v1495RunID[182], v1495SpillID[182], v1495ROC[182], v1495BoardID[182], v1495ChannelID[182], v1495StopTime[182], v1495VmeTime[182],
-	v1495CodaID[183], v1495RunID[183], v1495SpillID[183], v1495ROC[183], v1495BoardID[183], v1495ChannelID[183], v1495StopTime[183], v1495VmeTime[183],
-	v1495CodaID[184], v1495RunID[184], v1495SpillID[184], v1495ROC[184], v1495BoardID[184], v1495ChannelID[184], v1495StopTime[184], v1495VmeTime[184],
-	v1495CodaID[185], v1495RunID[185], v1495SpillID[185], v1495ROC[185], v1495BoardID[185], v1495ChannelID[185], v1495StopTime[185], v1495VmeTime[185],
-	v1495CodaID[186], v1495RunID[186], v1495SpillID[186], v1495ROC[186], v1495BoardID[186], v1495ChannelID[186], v1495StopTime[186], v1495VmeTime[186],
-	v1495CodaID[187], v1495RunID[187], v1495SpillID[187], v1495ROC[187], v1495BoardID[187], v1495ChannelID[187], v1495StopTime[187], v1495VmeTime[187],
-	v1495CodaID[188], v1495RunID[188], v1495SpillID[188], v1495ROC[188], v1495BoardID[188], v1495ChannelID[188], v1495StopTime[188], v1495VmeTime[188],
-	v1495CodaID[189], v1495RunID[189], v1495SpillID[189], v1495ROC[189], v1495BoardID[189], v1495ChannelID[189], v1495StopTime[189], v1495VmeTime[189],
-	v1495CodaID[190], v1495RunID[190], v1495SpillID[190], v1495ROC[190], v1495BoardID[190], v1495ChannelID[190], v1495StopTime[190], v1495VmeTime[190],
-	v1495CodaID[191], v1495RunID[191], v1495SpillID[191], v1495ROC[191], v1495BoardID[191], v1495ChannelID[191], v1495StopTime[191], v1495VmeTime[191],
-	v1495CodaID[192], v1495RunID[192], v1495SpillID[192], v1495ROC[192], v1495BoardID[192], v1495ChannelID[192], v1495StopTime[192], v1495VmeTime[192],
-	v1495CodaID[193], v1495RunID[193], v1495SpillID[193], v1495ROC[193], v1495BoardID[193], v1495ChannelID[193], v1495StopTime[193], v1495VmeTime[193],
-	v1495CodaID[194], v1495RunID[194], v1495SpillID[194], v1495ROC[194], v1495BoardID[194], v1495ChannelID[194], v1495StopTime[194], v1495VmeTime[194],
-	v1495CodaID[195], v1495RunID[195], v1495SpillID[195], v1495ROC[195], v1495BoardID[195], v1495ChannelID[195], v1495StopTime[195], v1495VmeTime[195],
-	v1495CodaID[196], v1495RunID[196], v1495SpillID[196], v1495ROC[196], v1495BoardID[196], v1495ChannelID[196], v1495StopTime[196], v1495VmeTime[196],
-	v1495CodaID[197], v1495RunID[197], v1495SpillID[197], v1495ROC[197], v1495BoardID[197], v1495ChannelID[197], v1495StopTime[197], v1495VmeTime[197],
-	v1495CodaID[198], v1495RunID[198], v1495SpillID[198], v1495ROC[198], v1495BoardID[198], v1495ChannelID[198], v1495StopTime[198], v1495VmeTime[198],
-	v1495CodaID[199], v1495RunID[199], v1495SpillID[199], v1495ROC[199], v1495BoardID[199], v1495ChannelID[199], v1495StopTime[199], v1495VmeTime[199]);
+	mysql_stmt_bind_param(v1495Stmt, v1495Bind);
 
-	if (mysql_query(conn, sqlv1495Query))
-	{
-		printf("Error (100): %s\n%s", mysql_error(conn), sqlv1495Query);
+	if (mysql_stmt_execute(v1495Stmt))
+    	{
+		printf("INSERT Error: %s\n", mysql_stmt_error(v1495Stmt));
+		printf("Error: %s\n", mysql_error(conn));
 		return 1;
 	}
 
@@ -2900,11 +2596,11 @@ int make_v1495_query(MYSQL* conn){
 	memset((void*)&v1495SpillID, 0, sizeof(int)*max_v1495_rows);
 	memset((void*)&v1495ROC, 0, sizeof(int)*max_v1495_rows);
 	memset((void*)&v1495BoardID, 0, sizeof(int)*max_v1495_rows);
-	memset((void*)&v1495StopTime, 0, sizeof(double)*max_v1495_rows);
-	memset((void*)&v1495VmeTime, 0, sizeof(double)*max_v1495_rows);
+	memset((void*)&v1495StopTime, 0, sizeof(int)*max_v1495_rows);
+	memset((void*)&v1495VmeTime, 0, sizeof(int)*max_v1495_rows);
 
 	// Clear the query string
-	sprintf(sqlv1495Query,"");
+	// sprintf(sqlv1495Query,"");
 	
 	if (mysql_query(conn, "UPDATE tempv1495 t, calmap.Mapping m\n"
                 "SET t.detectorName = m.detectorName, "
@@ -2930,7 +2626,7 @@ int make_v1495_query(MYSQL* conn){
 		printf("Error (103): %s\n", mysql_error(conn));
                 return 1;
         }
-	
+
 	return 0;
 
 }
@@ -3723,3 +3419,571 @@ int send_final_scaler(MYSQL *conn){
 // ================================================================
 // END OF CODE
 // ================================================================
+
+
+
+/*
+	sprintf(sqlTDCQuery, "INSERT INTO tempTDC (eventID, runID, spillID, rocID, boardID, channelID, "
+	"tdcTime, signalWidth, vmeTime) "
+	"VALUES (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f, %f)",
+	tdcCodaID[0], tdcRunID[0], tdcSpillID[0], tdcROC[0], tdcBoardID[0], tdcChannelID[0], tdcStopTime[0], tdcSignalWidth[0], tdcVmeTime[0],
+	tdcCodaID[1], tdcRunID[1], tdcSpillID[1], tdcROC[1], tdcBoardID[1], tdcChannelID[1], tdcStopTime[1], tdcSignalWidth[1], tdcVmeTime[1],
+	tdcCodaID[2], tdcRunID[2], tdcSpillID[2], tdcROC[2], tdcBoardID[2], tdcChannelID[2], tdcStopTime[2], tdcSignalWidth[2], tdcVmeTime[2],
+	tdcCodaID[3], tdcRunID[3], tdcSpillID[3], tdcROC[3], tdcBoardID[3], tdcChannelID[3], tdcStopTime[3], tdcSignalWidth[3], tdcVmeTime[3],
+	tdcCodaID[4], tdcRunID[4], tdcSpillID[4], tdcROC[4], tdcBoardID[4], tdcChannelID[4], tdcStopTime[4], tdcSignalWidth[4], tdcVmeTime[4],
+	tdcCodaID[5], tdcRunID[5], tdcSpillID[5], tdcROC[5], tdcBoardID[5], tdcChannelID[5], tdcStopTime[5], tdcSignalWidth[5], tdcVmeTime[5],
+	tdcCodaID[6], tdcRunID[6], tdcSpillID[6], tdcROC[6], tdcBoardID[6], tdcChannelID[6], tdcStopTime[6], tdcSignalWidth[6], tdcVmeTime[6],
+	tdcCodaID[7], tdcRunID[7], tdcSpillID[7], tdcROC[7], tdcBoardID[7], tdcChannelID[7], tdcStopTime[7], tdcSignalWidth[7], tdcVmeTime[7],
+	tdcCodaID[8], tdcRunID[8], tdcSpillID[8], tdcROC[8], tdcBoardID[8], tdcChannelID[8], tdcStopTime[8], tdcSignalWidth[8], tdcVmeTime[8],
+	tdcCodaID[9], tdcRunID[9], tdcSpillID[9], tdcROC[9], tdcBoardID[9], tdcChannelID[9], tdcStopTime[9], tdcSignalWidth[9], tdcVmeTime[9],
+	tdcCodaID[10], tdcRunID[10], tdcSpillID[10], tdcROC[10], tdcBoardID[10], tdcChannelID[10], tdcStopTime[10], tdcSignalWidth[10], tdcVmeTime[10],
+	tdcCodaID[11], tdcRunID[11], tdcSpillID[11], tdcROC[11], tdcBoardID[11], tdcChannelID[11], tdcStopTime[11], tdcSignalWidth[11], tdcVmeTime[11],
+	tdcCodaID[12], tdcRunID[12], tdcSpillID[12], tdcROC[12], tdcBoardID[12], tdcChannelID[12], tdcStopTime[12], tdcSignalWidth[12], tdcVmeTime[12],
+	tdcCodaID[13], tdcRunID[13], tdcSpillID[13], tdcROC[13], tdcBoardID[13], tdcChannelID[13], tdcStopTime[13], tdcSignalWidth[13], tdcVmeTime[13],
+	tdcCodaID[14], tdcRunID[14], tdcSpillID[14], tdcROC[14], tdcBoardID[14], tdcChannelID[14], tdcStopTime[14], tdcSignalWidth[14], tdcVmeTime[14],
+	tdcCodaID[15], tdcRunID[15], tdcSpillID[15], tdcROC[15], tdcBoardID[15], tdcChannelID[15], tdcStopTime[15], tdcSignalWidth[15], tdcVmeTime[15],
+	tdcCodaID[16], tdcRunID[16], tdcSpillID[16], tdcROC[16], tdcBoardID[16], tdcChannelID[16], tdcStopTime[16], tdcSignalWidth[16], tdcVmeTime[16],
+	tdcCodaID[17], tdcRunID[17], tdcSpillID[17], tdcROC[17], tdcBoardID[17], tdcChannelID[17], tdcStopTime[17], tdcSignalWidth[17], tdcVmeTime[17],
+	tdcCodaID[18], tdcRunID[18], tdcSpillID[18], tdcROC[18], tdcBoardID[18], tdcChannelID[18], tdcStopTime[18], tdcSignalWidth[18], tdcVmeTime[18],
+	tdcCodaID[19], tdcRunID[19], tdcSpillID[19], tdcROC[19], tdcBoardID[19], tdcChannelID[19], tdcStopTime[19], tdcSignalWidth[19], tdcVmeTime[19],
+	tdcCodaID[20], tdcRunID[20], tdcSpillID[20], tdcROC[20], tdcBoardID[20], tdcChannelID[20], tdcStopTime[20], tdcSignalWidth[20], tdcVmeTime[20],
+	tdcCodaID[21], tdcRunID[21], tdcSpillID[21], tdcROC[21], tdcBoardID[21], tdcChannelID[21], tdcStopTime[21], tdcSignalWidth[21], tdcVmeTime[21],
+	tdcCodaID[22], tdcRunID[22], tdcSpillID[22], tdcROC[22], tdcBoardID[22], tdcChannelID[22], tdcStopTime[22], tdcSignalWidth[22], tdcVmeTime[22],
+	tdcCodaID[23], tdcRunID[23], tdcSpillID[23], tdcROC[23], tdcBoardID[23], tdcChannelID[23], tdcStopTime[23], tdcSignalWidth[23], tdcVmeTime[23],
+	tdcCodaID[24], tdcRunID[24], tdcSpillID[24], tdcROC[24], tdcBoardID[24], tdcChannelID[24], tdcStopTime[24], tdcSignalWidth[24], tdcVmeTime[24],
+	tdcCodaID[25], tdcRunID[25], tdcSpillID[25], tdcROC[25], tdcBoardID[25], tdcChannelID[25], tdcStopTime[25], tdcSignalWidth[25], tdcVmeTime[25],
+	tdcCodaID[26], tdcRunID[26], tdcSpillID[26], tdcROC[26], tdcBoardID[26], tdcChannelID[26], tdcStopTime[26], tdcSignalWidth[26], tdcVmeTime[26],
+	tdcCodaID[27], tdcRunID[27], tdcSpillID[27], tdcROC[27], tdcBoardID[27], tdcChannelID[27], tdcStopTime[27], tdcSignalWidth[27], tdcVmeTime[27],
+	tdcCodaID[28], tdcRunID[28], tdcSpillID[28], tdcROC[28], tdcBoardID[28], tdcChannelID[28], tdcStopTime[28], tdcSignalWidth[28], tdcVmeTime[28],
+	tdcCodaID[29], tdcRunID[29], tdcSpillID[29], tdcROC[29], tdcBoardID[29], tdcChannelID[29], tdcStopTime[29], tdcSignalWidth[29], tdcVmeTime[29],
+	tdcCodaID[30], tdcRunID[30], tdcSpillID[30], tdcROC[30], tdcBoardID[30], tdcChannelID[30], tdcStopTime[30], tdcSignalWidth[30], tdcVmeTime[30],
+	tdcCodaID[31], tdcRunID[31], tdcSpillID[31], tdcROC[31], tdcBoardID[31], tdcChannelID[31], tdcStopTime[31], tdcSignalWidth[31], tdcVmeTime[31],
+	tdcCodaID[32], tdcRunID[32], tdcSpillID[32], tdcROC[32], tdcBoardID[32], tdcChannelID[32], tdcStopTime[32], tdcSignalWidth[32], tdcVmeTime[32],
+	tdcCodaID[33], tdcRunID[33], tdcSpillID[33], tdcROC[33], tdcBoardID[33], tdcChannelID[33], tdcStopTime[33], tdcSignalWidth[33], tdcVmeTime[33],
+	tdcCodaID[34], tdcRunID[34], tdcSpillID[34], tdcROC[34], tdcBoardID[34], tdcChannelID[34], tdcStopTime[34], tdcSignalWidth[34], tdcVmeTime[34],
+	tdcCodaID[35], tdcRunID[35], tdcSpillID[35], tdcROC[35], tdcBoardID[35], tdcChannelID[35], tdcStopTime[35], tdcSignalWidth[35], tdcVmeTime[35],
+	tdcCodaID[36], tdcRunID[36], tdcSpillID[36], tdcROC[36], tdcBoardID[36], tdcChannelID[36], tdcStopTime[36], tdcSignalWidth[36], tdcVmeTime[36],
+	tdcCodaID[37], tdcRunID[37], tdcSpillID[37], tdcROC[37], tdcBoardID[37], tdcChannelID[37], tdcStopTime[37], tdcSignalWidth[37], tdcVmeTime[37],
+	tdcCodaID[38], tdcRunID[38], tdcSpillID[38], tdcROC[38], tdcBoardID[38], tdcChannelID[38], tdcStopTime[38], tdcSignalWidth[38], tdcVmeTime[38],
+	tdcCodaID[39], tdcRunID[39], tdcSpillID[39], tdcROC[39], tdcBoardID[39], tdcChannelID[39], tdcStopTime[39], tdcSignalWidth[39], tdcVmeTime[39],
+	tdcCodaID[40], tdcRunID[40], tdcSpillID[40], tdcROC[40], tdcBoardID[40], tdcChannelID[40], tdcStopTime[40], tdcSignalWidth[40], tdcVmeTime[40],
+	tdcCodaID[41], tdcRunID[41], tdcSpillID[41], tdcROC[41], tdcBoardID[41], tdcChannelID[41], tdcStopTime[41], tdcSignalWidth[41], tdcVmeTime[41],
+	tdcCodaID[42], tdcRunID[42], tdcSpillID[42], tdcROC[42], tdcBoardID[42], tdcChannelID[42], tdcStopTime[42], tdcSignalWidth[42], tdcVmeTime[42],
+	tdcCodaID[43], tdcRunID[43], tdcSpillID[43], tdcROC[43], tdcBoardID[43], tdcChannelID[43], tdcStopTime[43], tdcSignalWidth[43], tdcVmeTime[43],
+	tdcCodaID[44], tdcRunID[44], tdcSpillID[44], tdcROC[44], tdcBoardID[44], tdcChannelID[44], tdcStopTime[44], tdcSignalWidth[44], tdcVmeTime[44],
+	tdcCodaID[45], tdcRunID[45], tdcSpillID[45], tdcROC[45], tdcBoardID[45], tdcChannelID[45], tdcStopTime[45], tdcSignalWidth[45], tdcVmeTime[45],
+	tdcCodaID[46], tdcRunID[46], tdcSpillID[46], tdcROC[46], tdcBoardID[46], tdcChannelID[46], tdcStopTime[46], tdcSignalWidth[46], tdcVmeTime[46],
+	tdcCodaID[47], tdcRunID[47], tdcSpillID[47], tdcROC[47], tdcBoardID[47], tdcChannelID[47], tdcStopTime[47], tdcSignalWidth[47], tdcVmeTime[47],
+	tdcCodaID[48], tdcRunID[48], tdcSpillID[48], tdcROC[48], tdcBoardID[48], tdcChannelID[48], tdcStopTime[48], tdcSignalWidth[48], tdcVmeTime[48],
+	tdcCodaID[49], tdcRunID[49], tdcSpillID[49], tdcROC[49], tdcBoardID[49], tdcChannelID[49], tdcStopTime[49], tdcSignalWidth[49], tdcVmeTime[49],
+	tdcCodaID[50], tdcRunID[50], tdcSpillID[50], tdcROC[50], tdcBoardID[50], tdcChannelID[50], tdcStopTime[50], tdcSignalWidth[50], tdcVmeTime[50],
+	tdcCodaID[51], tdcRunID[51], tdcSpillID[51], tdcROC[51], tdcBoardID[51], tdcChannelID[51], tdcStopTime[51], tdcSignalWidth[51], tdcVmeTime[51],
+	tdcCodaID[52], tdcRunID[52], tdcSpillID[52], tdcROC[52], tdcBoardID[52], tdcChannelID[52], tdcStopTime[52], tdcSignalWidth[52], tdcVmeTime[52],
+	tdcCodaID[53], tdcRunID[53], tdcSpillID[53], tdcROC[53], tdcBoardID[53], tdcChannelID[53], tdcStopTime[53], tdcSignalWidth[53], tdcVmeTime[53],
+	tdcCodaID[54], tdcRunID[54], tdcSpillID[54], tdcROC[54], tdcBoardID[54], tdcChannelID[54], tdcStopTime[54], tdcSignalWidth[54], tdcVmeTime[54],
+	tdcCodaID[55], tdcRunID[55], tdcSpillID[55], tdcROC[55], tdcBoardID[55], tdcChannelID[55], tdcStopTime[55], tdcSignalWidth[55], tdcVmeTime[55],
+	tdcCodaID[56], tdcRunID[56], tdcSpillID[56], tdcROC[56], tdcBoardID[56], tdcChannelID[56], tdcStopTime[56], tdcSignalWidth[56], tdcVmeTime[56],
+	tdcCodaID[57], tdcRunID[57], tdcSpillID[57], tdcROC[57], tdcBoardID[57], tdcChannelID[57], tdcStopTime[57], tdcSignalWidth[57], tdcVmeTime[57],
+	tdcCodaID[58], tdcRunID[58], tdcSpillID[58], tdcROC[58], tdcBoardID[58], tdcChannelID[58], tdcStopTime[58], tdcSignalWidth[58], tdcVmeTime[58],
+	tdcCodaID[59], tdcRunID[59], tdcSpillID[59], tdcROC[59], tdcBoardID[59], tdcChannelID[59], tdcStopTime[59], tdcSignalWidth[59], tdcVmeTime[59],
+	tdcCodaID[60], tdcRunID[60], tdcSpillID[60], tdcROC[60], tdcBoardID[60], tdcChannelID[60], tdcStopTime[60], tdcSignalWidth[60], tdcVmeTime[60],
+	tdcCodaID[61], tdcRunID[61], tdcSpillID[61], tdcROC[61], tdcBoardID[61], tdcChannelID[61], tdcStopTime[61], tdcSignalWidth[61], tdcVmeTime[61],
+	tdcCodaID[62], tdcRunID[62], tdcSpillID[62], tdcROC[62], tdcBoardID[62], tdcChannelID[62], tdcStopTime[62], tdcSignalWidth[62], tdcVmeTime[62],
+	tdcCodaID[63], tdcRunID[63], tdcSpillID[63], tdcROC[63], tdcBoardID[63], tdcChannelID[63], tdcStopTime[63], tdcSignalWidth[63], tdcVmeTime[63],
+	tdcCodaID[64], tdcRunID[64], tdcSpillID[64], tdcROC[64], tdcBoardID[64], tdcChannelID[64], tdcStopTime[64], tdcSignalWidth[64], tdcVmeTime[64],
+	tdcCodaID[65], tdcRunID[65], tdcSpillID[65], tdcROC[65], tdcBoardID[65], tdcChannelID[65], tdcStopTime[65], tdcSignalWidth[65], tdcVmeTime[65],
+	tdcCodaID[66], tdcRunID[66], tdcSpillID[66], tdcROC[66], tdcBoardID[66], tdcChannelID[66], tdcStopTime[66], tdcSignalWidth[66], tdcVmeTime[66],
+	tdcCodaID[67], tdcRunID[67], tdcSpillID[67], tdcROC[67], tdcBoardID[67], tdcChannelID[67], tdcStopTime[67], tdcSignalWidth[67], tdcVmeTime[67],
+	tdcCodaID[68], tdcRunID[68], tdcSpillID[68], tdcROC[68], tdcBoardID[68], tdcChannelID[68], tdcStopTime[68], tdcSignalWidth[68], tdcVmeTime[68],
+	tdcCodaID[69], tdcRunID[69], tdcSpillID[69], tdcROC[69], tdcBoardID[69], tdcChannelID[69], tdcStopTime[69], tdcSignalWidth[69], tdcVmeTime[69],
+	tdcCodaID[70], tdcRunID[70], tdcSpillID[70], tdcROC[70], tdcBoardID[70], tdcChannelID[70], tdcStopTime[70], tdcSignalWidth[70], tdcVmeTime[70],
+	tdcCodaID[71], tdcRunID[71], tdcSpillID[71], tdcROC[71], tdcBoardID[71], tdcChannelID[71], tdcStopTime[71], tdcSignalWidth[71], tdcVmeTime[71],
+	tdcCodaID[72], tdcRunID[72], tdcSpillID[72], tdcROC[72], tdcBoardID[72], tdcChannelID[72], tdcStopTime[72], tdcSignalWidth[72], tdcVmeTime[72],
+	tdcCodaID[73], tdcRunID[73], tdcSpillID[73], tdcROC[73], tdcBoardID[73], tdcChannelID[73], tdcStopTime[73], tdcSignalWidth[73], tdcVmeTime[73],
+	tdcCodaID[74], tdcRunID[74], tdcSpillID[74], tdcROC[74], tdcBoardID[74], tdcChannelID[74], tdcStopTime[74], tdcSignalWidth[74], tdcVmeTime[74],
+	tdcCodaID[75], tdcRunID[75], tdcSpillID[75], tdcROC[75], tdcBoardID[75], tdcChannelID[75], tdcStopTime[75], tdcSignalWidth[75], tdcVmeTime[75],
+	tdcCodaID[76], tdcRunID[76], tdcSpillID[76], tdcROC[76], tdcBoardID[76], tdcChannelID[76], tdcStopTime[76], tdcSignalWidth[76], tdcVmeTime[76],
+	tdcCodaID[77], tdcRunID[77], tdcSpillID[77], tdcROC[77], tdcBoardID[77], tdcChannelID[77], tdcStopTime[77], tdcSignalWidth[77], tdcVmeTime[77],
+	tdcCodaID[78], tdcRunID[78], tdcSpillID[78], tdcROC[78], tdcBoardID[78], tdcChannelID[78], tdcStopTime[78], tdcSignalWidth[78], tdcVmeTime[78],
+	tdcCodaID[79], tdcRunID[79], tdcSpillID[79], tdcROC[79], tdcBoardID[79], tdcChannelID[79], tdcStopTime[79], tdcSignalWidth[79], tdcVmeTime[79],
+	tdcCodaID[80], tdcRunID[80], tdcSpillID[80], tdcROC[80], tdcBoardID[80], tdcChannelID[80], tdcStopTime[80], tdcSignalWidth[80], tdcVmeTime[80],
+	tdcCodaID[81], tdcRunID[81], tdcSpillID[81], tdcROC[81], tdcBoardID[81], tdcChannelID[81], tdcStopTime[81], tdcSignalWidth[81], tdcVmeTime[81],
+	tdcCodaID[82], tdcRunID[82], tdcSpillID[82], tdcROC[82], tdcBoardID[82], tdcChannelID[82], tdcStopTime[82], tdcSignalWidth[82], tdcVmeTime[82],
+	tdcCodaID[83], tdcRunID[83], tdcSpillID[83], tdcROC[83], tdcBoardID[83], tdcChannelID[83], tdcStopTime[83], tdcSignalWidth[83], tdcVmeTime[83],
+	tdcCodaID[84], tdcRunID[84], tdcSpillID[84], tdcROC[84], tdcBoardID[84], tdcChannelID[84], tdcStopTime[84], tdcSignalWidth[84], tdcVmeTime[84],
+	tdcCodaID[85], tdcRunID[85], tdcSpillID[85], tdcROC[85], tdcBoardID[85], tdcChannelID[85], tdcStopTime[85], tdcSignalWidth[85], tdcVmeTime[85],
+	tdcCodaID[86], tdcRunID[86], tdcSpillID[86], tdcROC[86], tdcBoardID[86], tdcChannelID[86], tdcStopTime[86], tdcSignalWidth[86], tdcVmeTime[86],
+	tdcCodaID[87], tdcRunID[87], tdcSpillID[87], tdcROC[87], tdcBoardID[87], tdcChannelID[87], tdcStopTime[87], tdcSignalWidth[87], tdcVmeTime[87],
+	tdcCodaID[88], tdcRunID[88], tdcSpillID[88], tdcROC[88], tdcBoardID[88], tdcChannelID[88], tdcStopTime[88], tdcSignalWidth[88], tdcVmeTime[88],
+	tdcCodaID[89], tdcRunID[89], tdcSpillID[89], tdcROC[89], tdcBoardID[89], tdcChannelID[89], tdcStopTime[89], tdcSignalWidth[89], tdcVmeTime[89],
+	tdcCodaID[90], tdcRunID[90], tdcSpillID[90], tdcROC[90], tdcBoardID[90], tdcChannelID[90], tdcStopTime[90], tdcSignalWidth[90], tdcVmeTime[90],
+	tdcCodaID[91], tdcRunID[91], tdcSpillID[91], tdcROC[91], tdcBoardID[91], tdcChannelID[91], tdcStopTime[91], tdcSignalWidth[91], tdcVmeTime[91],
+	tdcCodaID[92], tdcRunID[92], tdcSpillID[92], tdcROC[92], tdcBoardID[92], tdcChannelID[92], tdcStopTime[92], tdcSignalWidth[92], tdcVmeTime[92],
+	tdcCodaID[93], tdcRunID[93], tdcSpillID[93], tdcROC[93], tdcBoardID[93], tdcChannelID[93], tdcStopTime[93], tdcSignalWidth[93], tdcVmeTime[93],
+	tdcCodaID[94], tdcRunID[94], tdcSpillID[94], tdcROC[94], tdcBoardID[94], tdcChannelID[94], tdcStopTime[94], tdcSignalWidth[94], tdcVmeTime[94],
+	tdcCodaID[95], tdcRunID[95], tdcSpillID[95], tdcROC[95], tdcBoardID[95], tdcChannelID[95], tdcStopTime[95], tdcSignalWidth[95], tdcVmeTime[95],
+	tdcCodaID[96], tdcRunID[96], tdcSpillID[96], tdcROC[96], tdcBoardID[96], tdcChannelID[96], tdcStopTime[96], tdcSignalWidth[96], tdcVmeTime[96],
+	tdcCodaID[97], tdcRunID[97], tdcSpillID[97], tdcROC[97], tdcBoardID[97], tdcChannelID[97], tdcStopTime[97], tdcSignalWidth[97], tdcVmeTime[97],
+	tdcCodaID[98], tdcRunID[98], tdcSpillID[98], tdcROC[98], tdcBoardID[98], tdcChannelID[98], tdcStopTime[98], tdcSignalWidth[98], tdcVmeTime[98],
+	tdcCodaID[99], tdcRunID[99], tdcSpillID[99], tdcROC[99], tdcBoardID[99], tdcChannelID[99], tdcStopTime[99], tdcSignalWidth[99], tdcVmeTime[99],
+	tdcCodaID[100], tdcRunID[100], tdcSpillID[100], tdcROC[100], tdcBoardID[100], tdcChannelID[100], tdcStopTime[100], tdcSignalWidth[100], tdcVmeTime[100],
+	tdcCodaID[101], tdcRunID[101], tdcSpillID[101], tdcROC[101], tdcBoardID[101], tdcChannelID[101], tdcStopTime[101], tdcSignalWidth[101], tdcVmeTime[101],
+	tdcCodaID[102], tdcRunID[102], tdcSpillID[102], tdcROC[102], tdcBoardID[102], tdcChannelID[102], tdcStopTime[102], tdcSignalWidth[102], tdcVmeTime[102],
+	tdcCodaID[103], tdcRunID[103], tdcSpillID[103], tdcROC[103], tdcBoardID[103], tdcChannelID[103], tdcStopTime[103], tdcSignalWidth[103], tdcVmeTime[103],
+	tdcCodaID[104], tdcRunID[104], tdcSpillID[104], tdcROC[104], tdcBoardID[104], tdcChannelID[104], tdcStopTime[104], tdcSignalWidth[104], tdcVmeTime[104],
+	tdcCodaID[105], tdcRunID[105], tdcSpillID[105], tdcROC[105], tdcBoardID[105], tdcChannelID[105], tdcStopTime[105], tdcSignalWidth[105], tdcVmeTime[105],
+	tdcCodaID[106], tdcRunID[106], tdcSpillID[106], tdcROC[106], tdcBoardID[106], tdcChannelID[106], tdcStopTime[106], tdcSignalWidth[106], tdcVmeTime[106],
+	tdcCodaID[107], tdcRunID[107], tdcSpillID[107], tdcROC[107], tdcBoardID[107], tdcChannelID[107], tdcStopTime[107], tdcSignalWidth[107], tdcVmeTime[107],
+	tdcCodaID[108], tdcRunID[108], tdcSpillID[108], tdcROC[108], tdcBoardID[108], tdcChannelID[108], tdcStopTime[108], tdcSignalWidth[108], tdcVmeTime[108],
+	tdcCodaID[109], tdcRunID[109], tdcSpillID[109], tdcROC[109], tdcBoardID[109], tdcChannelID[109], tdcStopTime[109], tdcSignalWidth[109], tdcVmeTime[109],
+	tdcCodaID[110], tdcRunID[110], tdcSpillID[110], tdcROC[110], tdcBoardID[110], tdcChannelID[110], tdcStopTime[110], tdcSignalWidth[110], tdcVmeTime[110],
+	tdcCodaID[111], tdcRunID[111], tdcSpillID[111], tdcROC[111], tdcBoardID[111], tdcChannelID[111], tdcStopTime[111], tdcSignalWidth[111], tdcVmeTime[111],
+	tdcCodaID[112], tdcRunID[112], tdcSpillID[112], tdcROC[112], tdcBoardID[112], tdcChannelID[112], tdcStopTime[112], tdcSignalWidth[112], tdcVmeTime[112],
+	tdcCodaID[113], tdcRunID[113], tdcSpillID[113], tdcROC[113], tdcBoardID[113], tdcChannelID[113], tdcStopTime[113], tdcSignalWidth[113], tdcVmeTime[113],
+	tdcCodaID[114], tdcRunID[114], tdcSpillID[114], tdcROC[114], tdcBoardID[114], tdcChannelID[114], tdcStopTime[114], tdcSignalWidth[114], tdcVmeTime[114],
+	tdcCodaID[115], tdcRunID[115], tdcSpillID[115], tdcROC[115], tdcBoardID[115], tdcChannelID[115], tdcStopTime[115], tdcSignalWidth[115], tdcVmeTime[115],
+	tdcCodaID[116], tdcRunID[116], tdcSpillID[116], tdcROC[116], tdcBoardID[116], tdcChannelID[116], tdcStopTime[116], tdcSignalWidth[116], tdcVmeTime[116],
+	tdcCodaID[117], tdcRunID[117], tdcSpillID[117], tdcROC[117], tdcBoardID[117], tdcChannelID[117], tdcStopTime[117], tdcSignalWidth[117], tdcVmeTime[117],
+	tdcCodaID[118], tdcRunID[118], tdcSpillID[118], tdcROC[118], tdcBoardID[118], tdcChannelID[118], tdcStopTime[118], tdcSignalWidth[118], tdcVmeTime[118],
+	tdcCodaID[119], tdcRunID[119], tdcSpillID[119], tdcROC[119], tdcBoardID[119], tdcChannelID[119], tdcStopTime[119], tdcSignalWidth[119], tdcVmeTime[119],
+	tdcCodaID[120], tdcRunID[120], tdcSpillID[120], tdcROC[120], tdcBoardID[120], tdcChannelID[120], tdcStopTime[120], tdcSignalWidth[120], tdcVmeTime[120],
+	tdcCodaID[121], tdcRunID[121], tdcSpillID[121], tdcROC[121], tdcBoardID[121], tdcChannelID[121], tdcStopTime[121], tdcSignalWidth[121], tdcVmeTime[121],
+	tdcCodaID[122], tdcRunID[122], tdcSpillID[122], tdcROC[122], tdcBoardID[122], tdcChannelID[122], tdcStopTime[122], tdcSignalWidth[122], tdcVmeTime[122],
+	tdcCodaID[123], tdcRunID[123], tdcSpillID[123], tdcROC[123], tdcBoardID[123], tdcChannelID[123], tdcStopTime[123], tdcSignalWidth[123], tdcVmeTime[123],
+	tdcCodaID[124], tdcRunID[124], tdcSpillID[124], tdcROC[124], tdcBoardID[124], tdcChannelID[124], tdcStopTime[124], tdcSignalWidth[124], tdcVmeTime[124],
+	tdcCodaID[125], tdcRunID[125], tdcSpillID[125], tdcROC[125], tdcBoardID[125], tdcChannelID[125], tdcStopTime[125], tdcSignalWidth[125], tdcVmeTime[125],
+	tdcCodaID[126], tdcRunID[126], tdcSpillID[126], tdcROC[126], tdcBoardID[126], tdcChannelID[126], tdcStopTime[126], tdcSignalWidth[126], tdcVmeTime[126],
+	tdcCodaID[127], tdcRunID[127], tdcSpillID[127], tdcROC[127], tdcBoardID[127], tdcChannelID[127], tdcStopTime[127], tdcSignalWidth[127], tdcVmeTime[127],
+	tdcCodaID[128], tdcRunID[128], tdcSpillID[128], tdcROC[128], tdcBoardID[128], tdcChannelID[128], tdcStopTime[128], tdcSignalWidth[128], tdcVmeTime[128],
+	tdcCodaID[129], tdcRunID[129], tdcSpillID[129], tdcROC[129], tdcBoardID[129], tdcChannelID[129], tdcStopTime[129], tdcSignalWidth[129], tdcVmeTime[129],
+	tdcCodaID[130], tdcRunID[130], tdcSpillID[130], tdcROC[130], tdcBoardID[130], tdcChannelID[130], tdcStopTime[130], tdcSignalWidth[130], tdcVmeTime[130],
+	tdcCodaID[131], tdcRunID[131], tdcSpillID[131], tdcROC[131], tdcBoardID[131], tdcChannelID[131], tdcStopTime[131], tdcSignalWidth[131], tdcVmeTime[131],
+	tdcCodaID[132], tdcRunID[132], tdcSpillID[132], tdcROC[132], tdcBoardID[132], tdcChannelID[132], tdcStopTime[132], tdcSignalWidth[132], tdcVmeTime[132],
+	tdcCodaID[133], tdcRunID[133], tdcSpillID[133], tdcROC[133], tdcBoardID[133], tdcChannelID[133], tdcStopTime[133], tdcSignalWidth[133], tdcVmeTime[133],
+	tdcCodaID[134], tdcRunID[134], tdcSpillID[134], tdcROC[134], tdcBoardID[134], tdcChannelID[134], tdcStopTime[134], tdcSignalWidth[134], tdcVmeTime[134],
+	tdcCodaID[135], tdcRunID[135], tdcSpillID[135], tdcROC[135], tdcBoardID[135], tdcChannelID[135], tdcStopTime[135], tdcSignalWidth[135], tdcVmeTime[135],
+	tdcCodaID[136], tdcRunID[136], tdcSpillID[136], tdcROC[136], tdcBoardID[136], tdcChannelID[136], tdcStopTime[136], tdcSignalWidth[136], tdcVmeTime[136],
+	tdcCodaID[137], tdcRunID[137], tdcSpillID[137], tdcROC[137], tdcBoardID[137], tdcChannelID[137], tdcStopTime[137], tdcSignalWidth[137], tdcVmeTime[137],
+	tdcCodaID[138], tdcRunID[138], tdcSpillID[138], tdcROC[138], tdcBoardID[138], tdcChannelID[138], tdcStopTime[138], tdcSignalWidth[138], tdcVmeTime[138],
+	tdcCodaID[139], tdcRunID[139], tdcSpillID[139], tdcROC[139], tdcBoardID[139], tdcChannelID[139], tdcStopTime[139], tdcSignalWidth[139], tdcVmeTime[139],
+	tdcCodaID[140], tdcRunID[140], tdcSpillID[140], tdcROC[140], tdcBoardID[140], tdcChannelID[140], tdcStopTime[140], tdcSignalWidth[140], tdcVmeTime[140],
+	tdcCodaID[141], tdcRunID[141], tdcSpillID[141], tdcROC[141], tdcBoardID[141], tdcChannelID[141], tdcStopTime[141], tdcSignalWidth[141], tdcVmeTime[141],
+	tdcCodaID[142], tdcRunID[142], tdcSpillID[142], tdcROC[142], tdcBoardID[142], tdcChannelID[142], tdcStopTime[142], tdcSignalWidth[142], tdcVmeTime[142],
+	tdcCodaID[143], tdcRunID[143], tdcSpillID[143], tdcROC[143], tdcBoardID[143], tdcChannelID[143], tdcStopTime[143], tdcSignalWidth[143], tdcVmeTime[143],
+	tdcCodaID[144], tdcRunID[144], tdcSpillID[144], tdcROC[144], tdcBoardID[144], tdcChannelID[144], tdcStopTime[144], tdcSignalWidth[144], tdcVmeTime[144],
+	tdcCodaID[145], tdcRunID[145], tdcSpillID[145], tdcROC[145], tdcBoardID[145], tdcChannelID[145], tdcStopTime[145], tdcSignalWidth[145], tdcVmeTime[145],
+	tdcCodaID[146], tdcRunID[146], tdcSpillID[146], tdcROC[146], tdcBoardID[146], tdcChannelID[146], tdcStopTime[146], tdcSignalWidth[146], tdcVmeTime[146],
+	tdcCodaID[147], tdcRunID[147], tdcSpillID[147], tdcROC[147], tdcBoardID[147], tdcChannelID[147], tdcStopTime[147], tdcSignalWidth[147], tdcVmeTime[147],
+	tdcCodaID[148], tdcRunID[148], tdcSpillID[148], tdcROC[148], tdcBoardID[148], tdcChannelID[148], tdcStopTime[148], tdcSignalWidth[148], tdcVmeTime[148],
+	tdcCodaID[149], tdcRunID[149], tdcSpillID[149], tdcROC[149], tdcBoardID[149], tdcChannelID[149], tdcStopTime[149], tdcSignalWidth[149], tdcVmeTime[149],
+	tdcCodaID[150], tdcRunID[150], tdcSpillID[150], tdcROC[150], tdcBoardID[150], tdcChannelID[150], tdcStopTime[150], tdcSignalWidth[150], tdcVmeTime[150],
+	tdcCodaID[151], tdcRunID[151], tdcSpillID[151], tdcROC[151], tdcBoardID[151], tdcChannelID[151], tdcStopTime[151], tdcSignalWidth[151], tdcVmeTime[151],
+	tdcCodaID[152], tdcRunID[152], tdcSpillID[152], tdcROC[152], tdcBoardID[152], tdcChannelID[152], tdcStopTime[152], tdcSignalWidth[152], tdcVmeTime[152],
+	tdcCodaID[153], tdcRunID[153], tdcSpillID[153], tdcROC[153], tdcBoardID[153], tdcChannelID[153], tdcStopTime[153], tdcSignalWidth[153], tdcVmeTime[153],
+	tdcCodaID[154], tdcRunID[154], tdcSpillID[154], tdcROC[154], tdcBoardID[154], tdcChannelID[154], tdcStopTime[154], tdcSignalWidth[154], tdcVmeTime[154],
+	tdcCodaID[155], tdcRunID[155], tdcSpillID[155], tdcROC[155], tdcBoardID[155], tdcChannelID[155], tdcStopTime[155], tdcSignalWidth[155], tdcVmeTime[155],
+	tdcCodaID[156], tdcRunID[156], tdcSpillID[156], tdcROC[156], tdcBoardID[156], tdcChannelID[156], tdcStopTime[156], tdcSignalWidth[156], tdcVmeTime[156],
+	tdcCodaID[157], tdcRunID[157], tdcSpillID[157], tdcROC[157], tdcBoardID[157], tdcChannelID[157], tdcStopTime[157], tdcSignalWidth[157], tdcVmeTime[157],
+	tdcCodaID[158], tdcRunID[158], tdcSpillID[158], tdcROC[158], tdcBoardID[158], tdcChannelID[158], tdcStopTime[158], tdcSignalWidth[158], tdcVmeTime[158],
+	tdcCodaID[159], tdcRunID[159], tdcSpillID[159], tdcROC[159], tdcBoardID[159], tdcChannelID[159], tdcStopTime[159], tdcSignalWidth[159], tdcVmeTime[159],
+	tdcCodaID[160], tdcRunID[160], tdcSpillID[160], tdcROC[160], tdcBoardID[160], tdcChannelID[160], tdcStopTime[160], tdcSignalWidth[160], tdcVmeTime[160],
+	tdcCodaID[161], tdcRunID[161], tdcSpillID[161], tdcROC[161], tdcBoardID[161], tdcChannelID[161], tdcStopTime[161], tdcSignalWidth[161], tdcVmeTime[161],
+	tdcCodaID[162], tdcRunID[162], tdcSpillID[162], tdcROC[162], tdcBoardID[162], tdcChannelID[162], tdcStopTime[162], tdcSignalWidth[162], tdcVmeTime[162],
+	tdcCodaID[163], tdcRunID[163], tdcSpillID[163], tdcROC[163], tdcBoardID[163], tdcChannelID[163], tdcStopTime[163], tdcSignalWidth[163], tdcVmeTime[163],
+	tdcCodaID[164], tdcRunID[164], tdcSpillID[164], tdcROC[164], tdcBoardID[164], tdcChannelID[164], tdcStopTime[164], tdcSignalWidth[164], tdcVmeTime[164],
+	tdcCodaID[165], tdcRunID[165], tdcSpillID[165], tdcROC[165], tdcBoardID[165], tdcChannelID[165], tdcStopTime[165], tdcSignalWidth[165], tdcVmeTime[165],
+	tdcCodaID[166], tdcRunID[166], tdcSpillID[166], tdcROC[166], tdcBoardID[166], tdcChannelID[166], tdcStopTime[166], tdcSignalWidth[166], tdcVmeTime[166],
+	tdcCodaID[167], tdcRunID[167], tdcSpillID[167], tdcROC[167], tdcBoardID[167], tdcChannelID[167], tdcStopTime[167], tdcSignalWidth[167], tdcVmeTime[167],
+	tdcCodaID[168], tdcRunID[168], tdcSpillID[168], tdcROC[168], tdcBoardID[168], tdcChannelID[168], tdcStopTime[168], tdcSignalWidth[168], tdcVmeTime[168],
+	tdcCodaID[169], tdcRunID[169], tdcSpillID[169], tdcROC[169], tdcBoardID[169], tdcChannelID[169], tdcStopTime[169], tdcSignalWidth[169], tdcVmeTime[169],
+	tdcCodaID[170], tdcRunID[170], tdcSpillID[170], tdcROC[170], tdcBoardID[170], tdcChannelID[170], tdcStopTime[170], tdcSignalWidth[170], tdcVmeTime[170],
+	tdcCodaID[171], tdcRunID[171], tdcSpillID[171], tdcROC[171], tdcBoardID[171], tdcChannelID[171], tdcStopTime[171], tdcSignalWidth[171], tdcVmeTime[171],
+	tdcCodaID[172], tdcRunID[172], tdcSpillID[172], tdcROC[172], tdcBoardID[172], tdcChannelID[172], tdcStopTime[172], tdcSignalWidth[172], tdcVmeTime[172],
+	tdcCodaID[173], tdcRunID[173], tdcSpillID[173], tdcROC[173], tdcBoardID[173], tdcChannelID[173], tdcStopTime[173], tdcSignalWidth[173], tdcVmeTime[173],
+	tdcCodaID[174], tdcRunID[174], tdcSpillID[174], tdcROC[174], tdcBoardID[174], tdcChannelID[174], tdcStopTime[174], tdcSignalWidth[174], tdcVmeTime[174],
+	tdcCodaID[175], tdcRunID[175], tdcSpillID[175], tdcROC[175], tdcBoardID[175], tdcChannelID[175], tdcStopTime[175], tdcSignalWidth[175], tdcVmeTime[175],
+	tdcCodaID[176], tdcRunID[176], tdcSpillID[176], tdcROC[176], tdcBoardID[176], tdcChannelID[176], tdcStopTime[176], tdcSignalWidth[176], tdcVmeTime[176],
+	tdcCodaID[177], tdcRunID[177], tdcSpillID[177], tdcROC[177], tdcBoardID[177], tdcChannelID[177], tdcStopTime[177], tdcSignalWidth[177], tdcVmeTime[177],
+	tdcCodaID[178], tdcRunID[178], tdcSpillID[178], tdcROC[178], tdcBoardID[178], tdcChannelID[178], tdcStopTime[178], tdcSignalWidth[178], tdcVmeTime[178],
+	tdcCodaID[179], tdcRunID[179], tdcSpillID[179], tdcROC[179], tdcBoardID[179], tdcChannelID[179], tdcStopTime[179], tdcSignalWidth[179], tdcVmeTime[179],
+	tdcCodaID[180], tdcRunID[180], tdcSpillID[180], tdcROC[180], tdcBoardID[180], tdcChannelID[180], tdcStopTime[180], tdcSignalWidth[180], tdcVmeTime[180],
+	tdcCodaID[181], tdcRunID[181], tdcSpillID[181], tdcROC[181], tdcBoardID[181], tdcChannelID[181], tdcStopTime[181], tdcSignalWidth[181], tdcVmeTime[181],
+	tdcCodaID[182], tdcRunID[182], tdcSpillID[182], tdcROC[182], tdcBoardID[182], tdcChannelID[182], tdcStopTime[182], tdcSignalWidth[182], tdcVmeTime[182],
+	tdcCodaID[183], tdcRunID[183], tdcSpillID[183], tdcROC[183], tdcBoardID[183], tdcChannelID[183], tdcStopTime[183], tdcSignalWidth[183], tdcVmeTime[183],
+	tdcCodaID[184], tdcRunID[184], tdcSpillID[184], tdcROC[184], tdcBoardID[184], tdcChannelID[184], tdcStopTime[184], tdcSignalWidth[184], tdcVmeTime[184],
+	tdcCodaID[185], tdcRunID[185], tdcSpillID[185], tdcROC[185], tdcBoardID[185], tdcChannelID[185], tdcStopTime[185], tdcSignalWidth[185], tdcVmeTime[185],
+	tdcCodaID[186], tdcRunID[186], tdcSpillID[186], tdcROC[186], tdcBoardID[186], tdcChannelID[186], tdcStopTime[186], tdcSignalWidth[186], tdcVmeTime[186],
+	tdcCodaID[187], tdcRunID[187], tdcSpillID[187], tdcROC[187], tdcBoardID[187], tdcChannelID[187], tdcStopTime[187], tdcSignalWidth[187], tdcVmeTime[187],
+	tdcCodaID[188], tdcRunID[188], tdcSpillID[188], tdcROC[188], tdcBoardID[188], tdcChannelID[188], tdcStopTime[188], tdcSignalWidth[188], tdcVmeTime[188],
+	tdcCodaID[189], tdcRunID[189], tdcSpillID[189], tdcROC[189], tdcBoardID[189], tdcChannelID[189], tdcStopTime[189], tdcSignalWidth[189], tdcVmeTime[189],
+	tdcCodaID[190], tdcRunID[190], tdcSpillID[190], tdcROC[190], tdcBoardID[190], tdcChannelID[190], tdcStopTime[190], tdcSignalWidth[190], tdcVmeTime[190],
+	tdcCodaID[191], tdcRunID[191], tdcSpillID[191], tdcROC[191], tdcBoardID[191], tdcChannelID[191], tdcStopTime[191], tdcSignalWidth[191], tdcVmeTime[191],
+	tdcCodaID[192], tdcRunID[192], tdcSpillID[192], tdcROC[192], tdcBoardID[192], tdcChannelID[192], tdcStopTime[192], tdcSignalWidth[192], tdcVmeTime[192],
+	tdcCodaID[193], tdcRunID[193], tdcSpillID[193], tdcROC[193], tdcBoardID[193], tdcChannelID[193], tdcStopTime[193], tdcSignalWidth[193], tdcVmeTime[193],
+	tdcCodaID[194], tdcRunID[194], tdcSpillID[194], tdcROC[194], tdcBoardID[194], tdcChannelID[194], tdcStopTime[194], tdcSignalWidth[194], tdcVmeTime[194],
+	tdcCodaID[195], tdcRunID[195], tdcSpillID[195], tdcROC[195], tdcBoardID[195], tdcChannelID[195], tdcStopTime[195], tdcSignalWidth[195], tdcVmeTime[195],
+	tdcCodaID[196], tdcRunID[196], tdcSpillID[196], tdcROC[196], tdcBoardID[196], tdcChannelID[196], tdcStopTime[196], tdcSignalWidth[196], tdcVmeTime[196],
+	tdcCodaID[197], tdcRunID[197], tdcSpillID[197], tdcROC[197], tdcBoardID[197], tdcChannelID[197], tdcStopTime[197], tdcSignalWidth[197], tdcVmeTime[197],
+	tdcCodaID[198], tdcRunID[198], tdcSpillID[198], tdcROC[198], tdcBoardID[198], tdcChannelID[198], tdcStopTime[198], tdcSignalWidth[198], tdcVmeTime[198],
+	tdcCodaID[199], tdcRunID[199], tdcSpillID[199], tdcROC[199], tdcBoardID[199], tdcChannelID[199], tdcStopTime[199], tdcSignalWidth[199], tdcVmeTime[199]);
+
+	if (mysql_query(conn, sqlTDCQuery))
+	{
+		printf("Error (100): %s\n%s", mysql_error(conn), sqlTDCQuery);
+		return 1;
+	}
+*/
+
+/*
+	char sqlv1495Query[100000];
+
+	if( mysql_query(conn, "DELETE FROM tempv1495") ) {
+		printf("Error: %s\n", mysql_error(conn));
+   	}
+
+	sprintf(sqlv1495Query, "INSERT INTO tempv1495 (eventID, runID, spillID, rocID, boardID, channelID, tdcTime, vmeTime) "
+	"VALUES (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), (%i, %i, %i, %i, %i, %i, %f, %f), "
+	"(%i, %i, %i, %i, %i, %i, %f, %f)",
+	v1495CodaID[0], v1495RunID[0], v1495SpillID[0], v1495ROC[0], v1495BoardID[0], v1495ChannelID[0], v1495StopTime[0], v1495VmeTime[0],
+	v1495CodaID[1], v1495RunID[1], v1495SpillID[1], v1495ROC[1], v1495BoardID[1], v1495ChannelID[1], v1495StopTime[1], v1495VmeTime[1],
+	v1495CodaID[2], v1495RunID[2], v1495SpillID[2], v1495ROC[2], v1495BoardID[2], v1495ChannelID[2], v1495StopTime[2], v1495VmeTime[2],
+	v1495CodaID[3], v1495RunID[3], v1495SpillID[3], v1495ROC[3], v1495BoardID[3], v1495ChannelID[3], v1495StopTime[3], v1495VmeTime[3],
+	v1495CodaID[4], v1495RunID[4], v1495SpillID[4], v1495ROC[4], v1495BoardID[4], v1495ChannelID[4], v1495StopTime[4], v1495VmeTime[4],
+	v1495CodaID[5], v1495RunID[5], v1495SpillID[5], v1495ROC[5], v1495BoardID[5], v1495ChannelID[5], v1495StopTime[5], v1495VmeTime[5],
+	v1495CodaID[6], v1495RunID[6], v1495SpillID[6], v1495ROC[6], v1495BoardID[6], v1495ChannelID[6], v1495StopTime[6], v1495VmeTime[6],
+	v1495CodaID[7], v1495RunID[7], v1495SpillID[7], v1495ROC[7], v1495BoardID[7], v1495ChannelID[7], v1495StopTime[7], v1495VmeTime[7],
+	v1495CodaID[8], v1495RunID[8], v1495SpillID[8], v1495ROC[8], v1495BoardID[8], v1495ChannelID[8], v1495StopTime[8], v1495VmeTime[8],
+	v1495CodaID[9], v1495RunID[9], v1495SpillID[9], v1495ROC[9], v1495BoardID[9], v1495ChannelID[9], v1495StopTime[9], v1495VmeTime[9],
+	v1495CodaID[10], v1495RunID[10], v1495SpillID[10], v1495ROC[10], v1495BoardID[10], v1495ChannelID[10], v1495StopTime[10], v1495VmeTime[10],
+	v1495CodaID[11], v1495RunID[11], v1495SpillID[11], v1495ROC[11], v1495BoardID[11], v1495ChannelID[11], v1495StopTime[11], v1495VmeTime[11],
+	v1495CodaID[12], v1495RunID[12], v1495SpillID[12], v1495ROC[12], v1495BoardID[12], v1495ChannelID[12], v1495StopTime[12], v1495VmeTime[12],
+	v1495CodaID[13], v1495RunID[13], v1495SpillID[13], v1495ROC[13], v1495BoardID[13], v1495ChannelID[13], v1495StopTime[13], v1495VmeTime[13],
+	v1495CodaID[14], v1495RunID[14], v1495SpillID[14], v1495ROC[14], v1495BoardID[14], v1495ChannelID[14], v1495StopTime[14], v1495VmeTime[14],
+	v1495CodaID[15], v1495RunID[15], v1495SpillID[15], v1495ROC[15], v1495BoardID[15], v1495ChannelID[15], v1495StopTime[15], v1495VmeTime[15],
+	v1495CodaID[16], v1495RunID[16], v1495SpillID[16], v1495ROC[16], v1495BoardID[16], v1495ChannelID[16], v1495StopTime[16], v1495VmeTime[16],
+	v1495CodaID[17], v1495RunID[17], v1495SpillID[17], v1495ROC[17], v1495BoardID[17], v1495ChannelID[17], v1495StopTime[17], v1495VmeTime[17],
+	v1495CodaID[18], v1495RunID[18], v1495SpillID[18], v1495ROC[18], v1495BoardID[18], v1495ChannelID[18], v1495StopTime[18], v1495VmeTime[18],
+	v1495CodaID[19], v1495RunID[19], v1495SpillID[19], v1495ROC[19], v1495BoardID[19], v1495ChannelID[19], v1495StopTime[19], v1495VmeTime[19],
+	v1495CodaID[20], v1495RunID[20], v1495SpillID[20], v1495ROC[20], v1495BoardID[20], v1495ChannelID[20], v1495StopTime[20], v1495VmeTime[20],
+	v1495CodaID[21], v1495RunID[21], v1495SpillID[21], v1495ROC[21], v1495BoardID[21], v1495ChannelID[21], v1495StopTime[21], v1495VmeTime[21],
+	v1495CodaID[22], v1495RunID[22], v1495SpillID[22], v1495ROC[22], v1495BoardID[22], v1495ChannelID[22], v1495StopTime[22], v1495VmeTime[22],
+	v1495CodaID[23], v1495RunID[23], v1495SpillID[23], v1495ROC[23], v1495BoardID[23], v1495ChannelID[23], v1495StopTime[23], v1495VmeTime[23],
+	v1495CodaID[24], v1495RunID[24], v1495SpillID[24], v1495ROC[24], v1495BoardID[24], v1495ChannelID[24], v1495StopTime[24], v1495VmeTime[24],
+	v1495CodaID[25], v1495RunID[25], v1495SpillID[25], v1495ROC[25], v1495BoardID[25], v1495ChannelID[25], v1495StopTime[25], v1495VmeTime[25],
+	v1495CodaID[26], v1495RunID[26], v1495SpillID[26], v1495ROC[26], v1495BoardID[26], v1495ChannelID[26], v1495StopTime[26], v1495VmeTime[26],
+	v1495CodaID[27], v1495RunID[27], v1495SpillID[27], v1495ROC[27], v1495BoardID[27], v1495ChannelID[27], v1495StopTime[27], v1495VmeTime[27],
+	v1495CodaID[28], v1495RunID[28], v1495SpillID[28], v1495ROC[28], v1495BoardID[28], v1495ChannelID[28], v1495StopTime[28], v1495VmeTime[28],
+	v1495CodaID[29], v1495RunID[29], v1495SpillID[29], v1495ROC[29], v1495BoardID[29], v1495ChannelID[29], v1495StopTime[29], v1495VmeTime[29],
+	v1495CodaID[30], v1495RunID[30], v1495SpillID[30], v1495ROC[30], v1495BoardID[30], v1495ChannelID[30], v1495StopTime[30], v1495VmeTime[30],
+	v1495CodaID[31], v1495RunID[31], v1495SpillID[31], v1495ROC[31], v1495BoardID[31], v1495ChannelID[31], v1495StopTime[31], v1495VmeTime[31],
+	v1495CodaID[32], v1495RunID[32], v1495SpillID[32], v1495ROC[32], v1495BoardID[32], v1495ChannelID[32], v1495StopTime[32], v1495VmeTime[32],
+	v1495CodaID[33], v1495RunID[33], v1495SpillID[33], v1495ROC[33], v1495BoardID[33], v1495ChannelID[33], v1495StopTime[33], v1495VmeTime[33],
+	v1495CodaID[34], v1495RunID[34], v1495SpillID[34], v1495ROC[34], v1495BoardID[34], v1495ChannelID[34], v1495StopTime[34], v1495VmeTime[34],
+	v1495CodaID[35], v1495RunID[35], v1495SpillID[35], v1495ROC[35], v1495BoardID[35], v1495ChannelID[35], v1495StopTime[35], v1495VmeTime[35],
+	v1495CodaID[36], v1495RunID[36], v1495SpillID[36], v1495ROC[36], v1495BoardID[36], v1495ChannelID[36], v1495StopTime[36], v1495VmeTime[36],
+	v1495CodaID[37], v1495RunID[37], v1495SpillID[37], v1495ROC[37], v1495BoardID[37], v1495ChannelID[37], v1495StopTime[37], v1495VmeTime[37],
+	v1495CodaID[38], v1495RunID[38], v1495SpillID[38], v1495ROC[38], v1495BoardID[38], v1495ChannelID[38], v1495StopTime[38], v1495VmeTime[38],
+	v1495CodaID[39], v1495RunID[39], v1495SpillID[39], v1495ROC[39], v1495BoardID[39], v1495ChannelID[39], v1495StopTime[39], v1495VmeTime[39],
+	v1495CodaID[40], v1495RunID[40], v1495SpillID[40], v1495ROC[40], v1495BoardID[40], v1495ChannelID[40], v1495StopTime[40], v1495VmeTime[40],
+	v1495CodaID[41], v1495RunID[41], v1495SpillID[41], v1495ROC[41], v1495BoardID[41], v1495ChannelID[41], v1495StopTime[41], v1495VmeTime[41],
+	v1495CodaID[42], v1495RunID[42], v1495SpillID[42], v1495ROC[42], v1495BoardID[42], v1495ChannelID[42], v1495StopTime[42], v1495VmeTime[42],
+	v1495CodaID[43], v1495RunID[43], v1495SpillID[43], v1495ROC[43], v1495BoardID[43], v1495ChannelID[43], v1495StopTime[43], v1495VmeTime[43],
+	v1495CodaID[44], v1495RunID[44], v1495SpillID[44], v1495ROC[44], v1495BoardID[44], v1495ChannelID[44], v1495StopTime[44], v1495VmeTime[44],
+	v1495CodaID[45], v1495RunID[45], v1495SpillID[45], v1495ROC[45], v1495BoardID[45], v1495ChannelID[45], v1495StopTime[45], v1495VmeTime[45],
+	v1495CodaID[46], v1495RunID[46], v1495SpillID[46], v1495ROC[46], v1495BoardID[46], v1495ChannelID[46], v1495StopTime[46], v1495VmeTime[46],
+	v1495CodaID[47], v1495RunID[47], v1495SpillID[47], v1495ROC[47], v1495BoardID[47], v1495ChannelID[47], v1495StopTime[47], v1495VmeTime[47],
+	v1495CodaID[48], v1495RunID[48], v1495SpillID[48], v1495ROC[48], v1495BoardID[48], v1495ChannelID[48], v1495StopTime[48], v1495VmeTime[48],
+	v1495CodaID[49], v1495RunID[49], v1495SpillID[49], v1495ROC[49], v1495BoardID[49], v1495ChannelID[49], v1495StopTime[49], v1495VmeTime[49],
+	v1495CodaID[50], v1495RunID[50], v1495SpillID[50], v1495ROC[50], v1495BoardID[50], v1495ChannelID[50], v1495StopTime[50], v1495VmeTime[50],
+	v1495CodaID[51], v1495RunID[51], v1495SpillID[51], v1495ROC[51], v1495BoardID[51], v1495ChannelID[51], v1495StopTime[51], v1495VmeTime[51],
+	v1495CodaID[52], v1495RunID[52], v1495SpillID[52], v1495ROC[52], v1495BoardID[52], v1495ChannelID[52], v1495StopTime[52], v1495VmeTime[52],
+	v1495CodaID[53], v1495RunID[53], v1495SpillID[53], v1495ROC[53], v1495BoardID[53], v1495ChannelID[53], v1495StopTime[53], v1495VmeTime[53],
+	v1495CodaID[54], v1495RunID[54], v1495SpillID[54], v1495ROC[54], v1495BoardID[54], v1495ChannelID[54], v1495StopTime[54], v1495VmeTime[54],
+	v1495CodaID[55], v1495RunID[55], v1495SpillID[55], v1495ROC[55], v1495BoardID[55], v1495ChannelID[55], v1495StopTime[55], v1495VmeTime[55],
+	v1495CodaID[56], v1495RunID[56], v1495SpillID[56], v1495ROC[56], v1495BoardID[56], v1495ChannelID[56], v1495StopTime[56], v1495VmeTime[56],
+	v1495CodaID[57], v1495RunID[57], v1495SpillID[57], v1495ROC[57], v1495BoardID[57], v1495ChannelID[57], v1495StopTime[57], v1495VmeTime[57],
+	v1495CodaID[58], v1495RunID[58], v1495SpillID[58], v1495ROC[58], v1495BoardID[58], v1495ChannelID[58], v1495StopTime[58], v1495VmeTime[58],
+	v1495CodaID[59], v1495RunID[59], v1495SpillID[59], v1495ROC[59], v1495BoardID[59], v1495ChannelID[59], v1495StopTime[59], v1495VmeTime[59],
+	v1495CodaID[60], v1495RunID[60], v1495SpillID[60], v1495ROC[60], v1495BoardID[60], v1495ChannelID[60], v1495StopTime[60], v1495VmeTime[60],
+	v1495CodaID[61], v1495RunID[61], v1495SpillID[61], v1495ROC[61], v1495BoardID[61], v1495ChannelID[61], v1495StopTime[61], v1495VmeTime[61],
+	v1495CodaID[62], v1495RunID[62], v1495SpillID[62], v1495ROC[62], v1495BoardID[62], v1495ChannelID[62], v1495StopTime[62], v1495VmeTime[62],
+	v1495CodaID[63], v1495RunID[63], v1495SpillID[63], v1495ROC[63], v1495BoardID[63], v1495ChannelID[63], v1495StopTime[63], v1495VmeTime[63],
+	v1495CodaID[64], v1495RunID[64], v1495SpillID[64], v1495ROC[64], v1495BoardID[64], v1495ChannelID[64], v1495StopTime[64], v1495VmeTime[64],
+	v1495CodaID[65], v1495RunID[65], v1495SpillID[65], v1495ROC[65], v1495BoardID[65], v1495ChannelID[65], v1495StopTime[65], v1495VmeTime[65],
+	v1495CodaID[66], v1495RunID[66], v1495SpillID[66], v1495ROC[66], v1495BoardID[66], v1495ChannelID[66], v1495StopTime[66], v1495VmeTime[66],
+	v1495CodaID[67], v1495RunID[67], v1495SpillID[67], v1495ROC[67], v1495BoardID[67], v1495ChannelID[67], v1495StopTime[67], v1495VmeTime[67],
+	v1495CodaID[68], v1495RunID[68], v1495SpillID[68], v1495ROC[68], v1495BoardID[68], v1495ChannelID[68], v1495StopTime[68], v1495VmeTime[68],
+	v1495CodaID[69], v1495RunID[69], v1495SpillID[69], v1495ROC[69], v1495BoardID[69], v1495ChannelID[69], v1495StopTime[69], v1495VmeTime[69],
+	v1495CodaID[70], v1495RunID[70], v1495SpillID[70], v1495ROC[70], v1495BoardID[70], v1495ChannelID[70], v1495StopTime[70], v1495VmeTime[70],
+	v1495CodaID[71], v1495RunID[71], v1495SpillID[71], v1495ROC[71], v1495BoardID[71], v1495ChannelID[71], v1495StopTime[71], v1495VmeTime[71],
+	v1495CodaID[72], v1495RunID[72], v1495SpillID[72], v1495ROC[72], v1495BoardID[72], v1495ChannelID[72], v1495StopTime[72], v1495VmeTime[72],
+	v1495CodaID[73], v1495RunID[73], v1495SpillID[73], v1495ROC[73], v1495BoardID[73], v1495ChannelID[73], v1495StopTime[73], v1495VmeTime[73],
+	v1495CodaID[74], v1495RunID[74], v1495SpillID[74], v1495ROC[74], v1495BoardID[74], v1495ChannelID[74], v1495StopTime[74], v1495VmeTime[74],
+	v1495CodaID[75], v1495RunID[75], v1495SpillID[75], v1495ROC[75], v1495BoardID[75], v1495ChannelID[75], v1495StopTime[75], v1495VmeTime[75],
+	v1495CodaID[76], v1495RunID[76], v1495SpillID[76], v1495ROC[76], v1495BoardID[76], v1495ChannelID[76], v1495StopTime[76], v1495VmeTime[76],
+	v1495CodaID[77], v1495RunID[77], v1495SpillID[77], v1495ROC[77], v1495BoardID[77], v1495ChannelID[77], v1495StopTime[77], v1495VmeTime[77],
+	v1495CodaID[78], v1495RunID[78], v1495SpillID[78], v1495ROC[78], v1495BoardID[78], v1495ChannelID[78], v1495StopTime[78], v1495VmeTime[78],
+	v1495CodaID[79], v1495RunID[79], v1495SpillID[79], v1495ROC[79], v1495BoardID[79], v1495ChannelID[79], v1495StopTime[79], v1495VmeTime[79],
+	v1495CodaID[80], v1495RunID[80], v1495SpillID[80], v1495ROC[80], v1495BoardID[80], v1495ChannelID[80], v1495StopTime[80], v1495VmeTime[80],
+	v1495CodaID[81], v1495RunID[81], v1495SpillID[81], v1495ROC[81], v1495BoardID[81], v1495ChannelID[81], v1495StopTime[81], v1495VmeTime[81],
+	v1495CodaID[82], v1495RunID[82], v1495SpillID[82], v1495ROC[82], v1495BoardID[82], v1495ChannelID[82], v1495StopTime[82], v1495VmeTime[82],
+	v1495CodaID[83], v1495RunID[83], v1495SpillID[83], v1495ROC[83], v1495BoardID[83], v1495ChannelID[83], v1495StopTime[83], v1495VmeTime[83],
+	v1495CodaID[84], v1495RunID[84], v1495SpillID[84], v1495ROC[84], v1495BoardID[84], v1495ChannelID[84], v1495StopTime[84], v1495VmeTime[84],
+	v1495CodaID[85], v1495RunID[85], v1495SpillID[85], v1495ROC[85], v1495BoardID[85], v1495ChannelID[85], v1495StopTime[85], v1495VmeTime[85],
+	v1495CodaID[86], v1495RunID[86], v1495SpillID[86], v1495ROC[86], v1495BoardID[86], v1495ChannelID[86], v1495StopTime[86], v1495VmeTime[86],
+	v1495CodaID[87], v1495RunID[87], v1495SpillID[87], v1495ROC[87], v1495BoardID[87], v1495ChannelID[87], v1495StopTime[87], v1495VmeTime[87],
+	v1495CodaID[88], v1495RunID[88], v1495SpillID[88], v1495ROC[88], v1495BoardID[88], v1495ChannelID[88], v1495StopTime[88], v1495VmeTime[88],
+	v1495CodaID[89], v1495RunID[89], v1495SpillID[89], v1495ROC[89], v1495BoardID[89], v1495ChannelID[89], v1495StopTime[89], v1495VmeTime[89],
+	v1495CodaID[90], v1495RunID[90], v1495SpillID[90], v1495ROC[90], v1495BoardID[90], v1495ChannelID[90], v1495StopTime[90], v1495VmeTime[90],
+	v1495CodaID[91], v1495RunID[91], v1495SpillID[91], v1495ROC[91], v1495BoardID[91], v1495ChannelID[91], v1495StopTime[91], v1495VmeTime[91],
+	v1495CodaID[92], v1495RunID[92], v1495SpillID[92], v1495ROC[92], v1495BoardID[92], v1495ChannelID[92], v1495StopTime[92], v1495VmeTime[92],
+	v1495CodaID[93], v1495RunID[93], v1495SpillID[93], v1495ROC[93], v1495BoardID[93], v1495ChannelID[93], v1495StopTime[93], v1495VmeTime[93],
+	v1495CodaID[94], v1495RunID[94], v1495SpillID[94], v1495ROC[94], v1495BoardID[94], v1495ChannelID[94], v1495StopTime[94], v1495VmeTime[94],
+	v1495CodaID[95], v1495RunID[95], v1495SpillID[95], v1495ROC[95], v1495BoardID[95], v1495ChannelID[95], v1495StopTime[95], v1495VmeTime[95],
+	v1495CodaID[96], v1495RunID[96], v1495SpillID[96], v1495ROC[96], v1495BoardID[96], v1495ChannelID[96], v1495StopTime[96], v1495VmeTime[96],
+	v1495CodaID[97], v1495RunID[97], v1495SpillID[97], v1495ROC[97], v1495BoardID[97], v1495ChannelID[97], v1495StopTime[97], v1495VmeTime[97],
+	v1495CodaID[98], v1495RunID[98], v1495SpillID[98], v1495ROC[98], v1495BoardID[98], v1495ChannelID[98], v1495StopTime[98], v1495VmeTime[98],
+	v1495CodaID[99], v1495RunID[99], v1495SpillID[99], v1495ROC[99], v1495BoardID[99], v1495ChannelID[99], v1495StopTime[99], v1495VmeTime[99],
+	v1495CodaID[100], v1495RunID[100], v1495SpillID[100], v1495ROC[100], v1495BoardID[100], v1495ChannelID[100], v1495StopTime[100], v1495VmeTime[100],
+	v1495CodaID[101], v1495RunID[101], v1495SpillID[101], v1495ROC[101], v1495BoardID[101], v1495ChannelID[101], v1495StopTime[101], v1495VmeTime[101],
+	v1495CodaID[102], v1495RunID[102], v1495SpillID[102], v1495ROC[102], v1495BoardID[102], v1495ChannelID[102], v1495StopTime[102], v1495VmeTime[102],
+	v1495CodaID[103], v1495RunID[103], v1495SpillID[103], v1495ROC[103], v1495BoardID[103], v1495ChannelID[103], v1495StopTime[103], v1495VmeTime[103],
+	v1495CodaID[104], v1495RunID[104], v1495SpillID[104], v1495ROC[104], v1495BoardID[104], v1495ChannelID[104], v1495StopTime[104], v1495VmeTime[104],
+	v1495CodaID[105], v1495RunID[105], v1495SpillID[105], v1495ROC[105], v1495BoardID[105], v1495ChannelID[105], v1495StopTime[105], v1495VmeTime[105],
+	v1495CodaID[106], v1495RunID[106], v1495SpillID[106], v1495ROC[106], v1495BoardID[106], v1495ChannelID[106], v1495StopTime[106], v1495VmeTime[106],
+	v1495CodaID[107], v1495RunID[107], v1495SpillID[107], v1495ROC[107], v1495BoardID[107], v1495ChannelID[107], v1495StopTime[107], v1495VmeTime[107],
+	v1495CodaID[108], v1495RunID[108], v1495SpillID[108], v1495ROC[108], v1495BoardID[108], v1495ChannelID[108], v1495StopTime[108], v1495VmeTime[108],
+	v1495CodaID[109], v1495RunID[109], v1495SpillID[109], v1495ROC[109], v1495BoardID[109], v1495ChannelID[109], v1495StopTime[109], v1495VmeTime[109],
+	v1495CodaID[110], v1495RunID[110], v1495SpillID[110], v1495ROC[110], v1495BoardID[110], v1495ChannelID[110], v1495StopTime[110], v1495VmeTime[110],
+	v1495CodaID[111], v1495RunID[111], v1495SpillID[111], v1495ROC[111], v1495BoardID[111], v1495ChannelID[111], v1495StopTime[111], v1495VmeTime[111],
+	v1495CodaID[112], v1495RunID[112], v1495SpillID[112], v1495ROC[112], v1495BoardID[112], v1495ChannelID[112], v1495StopTime[112], v1495VmeTime[112],
+	v1495CodaID[113], v1495RunID[113], v1495SpillID[113], v1495ROC[113], v1495BoardID[113], v1495ChannelID[113], v1495StopTime[113], v1495VmeTime[113],
+	v1495CodaID[114], v1495RunID[114], v1495SpillID[114], v1495ROC[114], v1495BoardID[114], v1495ChannelID[114], v1495StopTime[114], v1495VmeTime[114],
+	v1495CodaID[115], v1495RunID[115], v1495SpillID[115], v1495ROC[115], v1495BoardID[115], v1495ChannelID[115], v1495StopTime[115], v1495VmeTime[115],
+	v1495CodaID[116], v1495RunID[116], v1495SpillID[116], v1495ROC[116], v1495BoardID[116], v1495ChannelID[116], v1495StopTime[116], v1495VmeTime[116],
+	v1495CodaID[117], v1495RunID[117], v1495SpillID[117], v1495ROC[117], v1495BoardID[117], v1495ChannelID[117], v1495StopTime[117], v1495VmeTime[117],
+	v1495CodaID[118], v1495RunID[118], v1495SpillID[118], v1495ROC[118], v1495BoardID[118], v1495ChannelID[118], v1495StopTime[118], v1495VmeTime[118],
+	v1495CodaID[119], v1495RunID[119], v1495SpillID[119], v1495ROC[119], v1495BoardID[119], v1495ChannelID[119], v1495StopTime[119], v1495VmeTime[119],
+	v1495CodaID[120], v1495RunID[120], v1495SpillID[120], v1495ROC[120], v1495BoardID[120], v1495ChannelID[120], v1495StopTime[120], v1495VmeTime[120],
+	v1495CodaID[121], v1495RunID[121], v1495SpillID[121], v1495ROC[121], v1495BoardID[121], v1495ChannelID[121], v1495StopTime[121], v1495VmeTime[121],
+	v1495CodaID[122], v1495RunID[122], v1495SpillID[122], v1495ROC[122], v1495BoardID[122], v1495ChannelID[122], v1495StopTime[122], v1495VmeTime[122],
+	v1495CodaID[123], v1495RunID[123], v1495SpillID[123], v1495ROC[123], v1495BoardID[123], v1495ChannelID[123], v1495StopTime[123], v1495VmeTime[123],
+	v1495CodaID[124], v1495RunID[124], v1495SpillID[124], v1495ROC[124], v1495BoardID[124], v1495ChannelID[124], v1495StopTime[124], v1495VmeTime[124],
+	v1495CodaID[125], v1495RunID[125], v1495SpillID[125], v1495ROC[125], v1495BoardID[125], v1495ChannelID[125], v1495StopTime[125], v1495VmeTime[125],
+	v1495CodaID[126], v1495RunID[126], v1495SpillID[126], v1495ROC[126], v1495BoardID[126], v1495ChannelID[126], v1495StopTime[126], v1495VmeTime[126],
+	v1495CodaID[127], v1495RunID[127], v1495SpillID[127], v1495ROC[127], v1495BoardID[127], v1495ChannelID[127], v1495StopTime[127], v1495VmeTime[127],
+	v1495CodaID[128], v1495RunID[128], v1495SpillID[128], v1495ROC[128], v1495BoardID[128], v1495ChannelID[128], v1495StopTime[128], v1495VmeTime[128],
+	v1495CodaID[129], v1495RunID[129], v1495SpillID[129], v1495ROC[129], v1495BoardID[129], v1495ChannelID[129], v1495StopTime[129], v1495VmeTime[129],
+	v1495CodaID[130], v1495RunID[130], v1495SpillID[130], v1495ROC[130], v1495BoardID[130], v1495ChannelID[130], v1495StopTime[130], v1495VmeTime[130],
+	v1495CodaID[131], v1495RunID[131], v1495SpillID[131], v1495ROC[131], v1495BoardID[131], v1495ChannelID[131], v1495StopTime[131], v1495VmeTime[131],
+	v1495CodaID[132], v1495RunID[132], v1495SpillID[132], v1495ROC[132], v1495BoardID[132], v1495ChannelID[132], v1495StopTime[132], v1495VmeTime[132],
+	v1495CodaID[133], v1495RunID[133], v1495SpillID[133], v1495ROC[133], v1495BoardID[133], v1495ChannelID[133], v1495StopTime[133], v1495VmeTime[133],
+	v1495CodaID[134], v1495RunID[134], v1495SpillID[134], v1495ROC[134], v1495BoardID[134], v1495ChannelID[134], v1495StopTime[134], v1495VmeTime[134],
+	v1495CodaID[135], v1495RunID[135], v1495SpillID[135], v1495ROC[135], v1495BoardID[135], v1495ChannelID[135], v1495StopTime[135], v1495VmeTime[135],
+	v1495CodaID[136], v1495RunID[136], v1495SpillID[136], v1495ROC[136], v1495BoardID[136], v1495ChannelID[136], v1495StopTime[136], v1495VmeTime[136],
+	v1495CodaID[137], v1495RunID[137], v1495SpillID[137], v1495ROC[137], v1495BoardID[137], v1495ChannelID[137], v1495StopTime[137], v1495VmeTime[137],
+	v1495CodaID[138], v1495RunID[138], v1495SpillID[138], v1495ROC[138], v1495BoardID[138], v1495ChannelID[138], v1495StopTime[138], v1495VmeTime[138],
+	v1495CodaID[139], v1495RunID[139], v1495SpillID[139], v1495ROC[139], v1495BoardID[139], v1495ChannelID[139], v1495StopTime[139], v1495VmeTime[139],
+	v1495CodaID[140], v1495RunID[140], v1495SpillID[140], v1495ROC[140], v1495BoardID[140], v1495ChannelID[140], v1495StopTime[140], v1495VmeTime[140],
+	v1495CodaID[141], v1495RunID[141], v1495SpillID[141], v1495ROC[141], v1495BoardID[141], v1495ChannelID[141], v1495StopTime[141], v1495VmeTime[141],
+	v1495CodaID[142], v1495RunID[142], v1495SpillID[142], v1495ROC[142], v1495BoardID[142], v1495ChannelID[142], v1495StopTime[142], v1495VmeTime[142],
+	v1495CodaID[143], v1495RunID[143], v1495SpillID[143], v1495ROC[143], v1495BoardID[143], v1495ChannelID[143], v1495StopTime[143], v1495VmeTime[143],
+	v1495CodaID[144], v1495RunID[144], v1495SpillID[144], v1495ROC[144], v1495BoardID[144], v1495ChannelID[144], v1495StopTime[144], v1495VmeTime[144],
+	v1495CodaID[145], v1495RunID[145], v1495SpillID[145], v1495ROC[145], v1495BoardID[145], v1495ChannelID[145], v1495StopTime[145], v1495VmeTime[145],
+	v1495CodaID[146], v1495RunID[146], v1495SpillID[146], v1495ROC[146], v1495BoardID[146], v1495ChannelID[146], v1495StopTime[146], v1495VmeTime[146],
+	v1495CodaID[147], v1495RunID[147], v1495SpillID[147], v1495ROC[147], v1495BoardID[147], v1495ChannelID[147], v1495StopTime[147], v1495VmeTime[147],
+	v1495CodaID[148], v1495RunID[148], v1495SpillID[148], v1495ROC[148], v1495BoardID[148], v1495ChannelID[148], v1495StopTime[148], v1495VmeTime[148],
+	v1495CodaID[149], v1495RunID[149], v1495SpillID[149], v1495ROC[149], v1495BoardID[149], v1495ChannelID[149], v1495StopTime[149], v1495VmeTime[149],
+	v1495CodaID[150], v1495RunID[150], v1495SpillID[150], v1495ROC[150], v1495BoardID[150], v1495ChannelID[150], v1495StopTime[150], v1495VmeTime[150],
+	v1495CodaID[151], v1495RunID[151], v1495SpillID[151], v1495ROC[151], v1495BoardID[151], v1495ChannelID[151], v1495StopTime[151], v1495VmeTime[151],
+	v1495CodaID[152], v1495RunID[152], v1495SpillID[152], v1495ROC[152], v1495BoardID[152], v1495ChannelID[152], v1495StopTime[152], v1495VmeTime[152],
+	v1495CodaID[153], v1495RunID[153], v1495SpillID[153], v1495ROC[153], v1495BoardID[153], v1495ChannelID[153], v1495StopTime[153], v1495VmeTime[153],
+	v1495CodaID[154], v1495RunID[154], v1495SpillID[154], v1495ROC[154], v1495BoardID[154], v1495ChannelID[154], v1495StopTime[154], v1495VmeTime[154],
+	v1495CodaID[155], v1495RunID[155], v1495SpillID[155], v1495ROC[155], v1495BoardID[155], v1495ChannelID[155], v1495StopTime[155], v1495VmeTime[155],
+	v1495CodaID[156], v1495RunID[156], v1495SpillID[156], v1495ROC[156], v1495BoardID[156], v1495ChannelID[156], v1495StopTime[156], v1495VmeTime[156],
+	v1495CodaID[157], v1495RunID[157], v1495SpillID[157], v1495ROC[157], v1495BoardID[157], v1495ChannelID[157], v1495StopTime[157], v1495VmeTime[157],
+	v1495CodaID[158], v1495RunID[158], v1495SpillID[158], v1495ROC[158], v1495BoardID[158], v1495ChannelID[158], v1495StopTime[158], v1495VmeTime[158],
+	v1495CodaID[159], v1495RunID[159], v1495SpillID[159], v1495ROC[159], v1495BoardID[159], v1495ChannelID[159], v1495StopTime[159], v1495VmeTime[159],
+	v1495CodaID[160], v1495RunID[160], v1495SpillID[160], v1495ROC[160], v1495BoardID[160], v1495ChannelID[160], v1495StopTime[160], v1495VmeTime[160],
+	v1495CodaID[161], v1495RunID[161], v1495SpillID[161], v1495ROC[161], v1495BoardID[161], v1495ChannelID[161], v1495StopTime[161], v1495VmeTime[161],
+	v1495CodaID[162], v1495RunID[162], v1495SpillID[162], v1495ROC[162], v1495BoardID[162], v1495ChannelID[162], v1495StopTime[162], v1495VmeTime[162],
+	v1495CodaID[163], v1495RunID[163], v1495SpillID[163], v1495ROC[163], v1495BoardID[163], v1495ChannelID[163], v1495StopTime[163], v1495VmeTime[163],
+	v1495CodaID[164], v1495RunID[164], v1495SpillID[164], v1495ROC[164], v1495BoardID[164], v1495ChannelID[164], v1495StopTime[164], v1495VmeTime[164],
+	v1495CodaID[165], v1495RunID[165], v1495SpillID[165], v1495ROC[165], v1495BoardID[165], v1495ChannelID[165], v1495StopTime[165], v1495VmeTime[165],
+	v1495CodaID[166], v1495RunID[166], v1495SpillID[166], v1495ROC[166], v1495BoardID[166], v1495ChannelID[166], v1495StopTime[166], v1495VmeTime[166],
+	v1495CodaID[167], v1495RunID[167], v1495SpillID[167], v1495ROC[167], v1495BoardID[167], v1495ChannelID[167], v1495StopTime[167], v1495VmeTime[167],
+	v1495CodaID[168], v1495RunID[168], v1495SpillID[168], v1495ROC[168], v1495BoardID[168], v1495ChannelID[168], v1495StopTime[168], v1495VmeTime[168],
+	v1495CodaID[169], v1495RunID[169], v1495SpillID[169], v1495ROC[169], v1495BoardID[169], v1495ChannelID[169], v1495StopTime[169], v1495VmeTime[169],
+	v1495CodaID[170], v1495RunID[170], v1495SpillID[170], v1495ROC[170], v1495BoardID[170], v1495ChannelID[170], v1495StopTime[170], v1495VmeTime[170],
+	v1495CodaID[171], v1495RunID[171], v1495SpillID[171], v1495ROC[171], v1495BoardID[171], v1495ChannelID[171], v1495StopTime[171], v1495VmeTime[171],
+	v1495CodaID[172], v1495RunID[172], v1495SpillID[172], v1495ROC[172], v1495BoardID[172], v1495ChannelID[172], v1495StopTime[172], v1495VmeTime[172],
+	v1495CodaID[173], v1495RunID[173], v1495SpillID[173], v1495ROC[173], v1495BoardID[173], v1495ChannelID[173], v1495StopTime[173], v1495VmeTime[173],
+	v1495CodaID[174], v1495RunID[174], v1495SpillID[174], v1495ROC[174], v1495BoardID[174], v1495ChannelID[174], v1495StopTime[174], v1495VmeTime[174],
+	v1495CodaID[175], v1495RunID[175], v1495SpillID[175], v1495ROC[175], v1495BoardID[175], v1495ChannelID[175], v1495StopTime[175], v1495VmeTime[175],
+	v1495CodaID[176], v1495RunID[176], v1495SpillID[176], v1495ROC[176], v1495BoardID[176], v1495ChannelID[176], v1495StopTime[176], v1495VmeTime[176],
+	v1495CodaID[177], v1495RunID[177], v1495SpillID[177], v1495ROC[177], v1495BoardID[177], v1495ChannelID[177], v1495StopTime[177], v1495VmeTime[177],
+	v1495CodaID[178], v1495RunID[178], v1495SpillID[178], v1495ROC[178], v1495BoardID[178], v1495ChannelID[178], v1495StopTime[178], v1495VmeTime[178],
+	v1495CodaID[179], v1495RunID[179], v1495SpillID[179], v1495ROC[179], v1495BoardID[179], v1495ChannelID[179], v1495StopTime[179], v1495VmeTime[179],
+	v1495CodaID[180], v1495RunID[180], v1495SpillID[180], v1495ROC[180], v1495BoardID[180], v1495ChannelID[180], v1495StopTime[180], v1495VmeTime[180],
+	v1495CodaID[181], v1495RunID[181], v1495SpillID[181], v1495ROC[181], v1495BoardID[181], v1495ChannelID[181], v1495StopTime[181], v1495VmeTime[181],
+	v1495CodaID[182], v1495RunID[182], v1495SpillID[182], v1495ROC[182], v1495BoardID[182], v1495ChannelID[182], v1495StopTime[182], v1495VmeTime[182],
+	v1495CodaID[183], v1495RunID[183], v1495SpillID[183], v1495ROC[183], v1495BoardID[183], v1495ChannelID[183], v1495StopTime[183], v1495VmeTime[183],
+	v1495CodaID[184], v1495RunID[184], v1495SpillID[184], v1495ROC[184], v1495BoardID[184], v1495ChannelID[184], v1495StopTime[184], v1495VmeTime[184],
+	v1495CodaID[185], v1495RunID[185], v1495SpillID[185], v1495ROC[185], v1495BoardID[185], v1495ChannelID[185], v1495StopTime[185], v1495VmeTime[185],
+	v1495CodaID[186], v1495RunID[186], v1495SpillID[186], v1495ROC[186], v1495BoardID[186], v1495ChannelID[186], v1495StopTime[186], v1495VmeTime[186],
+	v1495CodaID[187], v1495RunID[187], v1495SpillID[187], v1495ROC[187], v1495BoardID[187], v1495ChannelID[187], v1495StopTime[187], v1495VmeTime[187],
+	v1495CodaID[188], v1495RunID[188], v1495SpillID[188], v1495ROC[188], v1495BoardID[188], v1495ChannelID[188], v1495StopTime[188], v1495VmeTime[188],
+	v1495CodaID[189], v1495RunID[189], v1495SpillID[189], v1495ROC[189], v1495BoardID[189], v1495ChannelID[189], v1495StopTime[189], v1495VmeTime[189],
+	v1495CodaID[190], v1495RunID[190], v1495SpillID[190], v1495ROC[190], v1495BoardID[190], v1495ChannelID[190], v1495StopTime[190], v1495VmeTime[190],
+	v1495CodaID[191], v1495RunID[191], v1495SpillID[191], v1495ROC[191], v1495BoardID[191], v1495ChannelID[191], v1495StopTime[191], v1495VmeTime[191],
+	v1495CodaID[192], v1495RunID[192], v1495SpillID[192], v1495ROC[192], v1495BoardID[192], v1495ChannelID[192], v1495StopTime[192], v1495VmeTime[192],
+	v1495CodaID[193], v1495RunID[193], v1495SpillID[193], v1495ROC[193], v1495BoardID[193], v1495ChannelID[193], v1495StopTime[193], v1495VmeTime[193],
+	v1495CodaID[194], v1495RunID[194], v1495SpillID[194], v1495ROC[194], v1495BoardID[194], v1495ChannelID[194], v1495StopTime[194], v1495VmeTime[194],
+	v1495CodaID[195], v1495RunID[195], v1495SpillID[195], v1495ROC[195], v1495BoardID[195], v1495ChannelID[195], v1495StopTime[195], v1495VmeTime[195],
+	v1495CodaID[196], v1495RunID[196], v1495SpillID[196], v1495ROC[196], v1495BoardID[196], v1495ChannelID[196], v1495StopTime[196], v1495VmeTime[196],
+	v1495CodaID[197], v1495RunID[197], v1495SpillID[197], v1495ROC[197], v1495BoardID[197], v1495ChannelID[197], v1495StopTime[197], v1495VmeTime[197],
+	v1495CodaID[198], v1495RunID[198], v1495SpillID[198], v1495ROC[198], v1495BoardID[198], v1495ChannelID[198], v1495StopTime[198], v1495VmeTime[198],
+	v1495CodaID[199], v1495RunID[199], v1495SpillID[199], v1495ROC[199], v1495BoardID[199], v1495ChannelID[199], v1495StopTime[199], v1495VmeTime[199]);
+
+	if (mysql_query(conn, sqlv1495Query))
+	{
+		printf("Error (100): %s\n%s", mysql_error(conn), sqlv1495Query);
+		return 1;
+	}
+*/
+
