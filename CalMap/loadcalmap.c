@@ -62,37 +62,24 @@ int main(int argc,char* argv[]){
   // Now check if the schema and table exist already, prompt to replace if it does
   if ( overwrite(conn) ) { return 1; }
 
-  // Check the file to be uploaded and correct 'grammatical' errors
-  if ( method==LOAD ) {
-  	// Check if the file exists in the current working directory
-  	if ( file_exists(source) ) { 
-		// Create the shell command with which to run 'check' on the file
-		if ( mode==CALIBRATION ) { sprintf(check_string,"check --cal %s", source); }
-		else if ( mode==MAPPING ) { sprintf(check_string,"check --map %s", source); }
-		// Run 'check' on the file
-		if (system(check_string)){
-			printf("ERROR: 'check' script error\n");
-			return 1; 
-		}
-	} else {
-		printf(">> ERROR: File ""%s"" not found. Please try again.\n\n", source);
-		return 1;
-	}
-  // Check to make sure the source of the table copy exists
-  } else if ( method==COPY ) {
-	if ( !table_exists(conn, source) ) {
-		printf(">> ERROR: Source schema or table not found. Please try again.\n\n");
-		return 1;
-  	}
-  }
-
   // Make all the necessary schemas and tables, should they not already exist
   create_table(conn);
 
   if (method==LOAD ) {
-	if ( load_data(conn) ) { return 1; }
+	// Check if the file exists in the current working directory
+	if (file_exists(source)){
+	    if ( load_data(conn) ) { return 1; }
+	} else {
+	    printf(">> ERROR: File ""%s"" not found. Please try again.\n\n", source);
+	}
   } else if ( method==COPY ) {
-	if ( copy_data(conn) ) { return 1; }
+	// Check if the source table exists
+	if ( table_exists(conn, source) ) {
+	    if ( copy_data(conn) ) { return 1; }
+  	} else {
+	    printf(">> ERROR: Source schema or table not found. Please try again.\n\n");
+	    return 1;
+	}
   }
 
   printf(">> Upload of %s, destination %s successful.\n>> Exiting...\n\n", 
@@ -374,16 +361,14 @@ int create_table(MYSQL *conn){
 int load_data(MYSQL *conn){
 
   char qryString[10000];
-  char *path = malloc(1000);
-  path = getenv("PWD");
 
   // Load the file directly into the table
-  sprintf(qryString,"LOAD DATA LOCAL INFILE '%s/%s.new' \n"
+  sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' \n"
 	"INTO TABLE %s.%s \n"
 	"FIELDS TERMINATED BY '\\t' \n"
-	"LINES TERMINATED BY '\\n' \n"
+	"LINES TERMINATED BY '\\r\\n' \n"
 	"IGNORE 1 LINES",
-	path, source, destination, mode_string);
+	source, destination, mode_string);
 
   if(mysql_query(conn, qryString))
   {
