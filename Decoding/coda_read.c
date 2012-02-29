@@ -184,8 +184,8 @@ int main(int argc,char* argv[]){
 	    mysql_stmt_close(runStmt);
 	    mysql_stmt_close(spillStmt);	
 	    mysql_stmt_close(codaEvStmt);
-	    mysql_stmt_close(hitStmt);	
-	    mysql_stmt_close(v1495Stmt);
+// 	    mysql_stmt_close(hitStmt);	
+// 	    mysql_stmt_close(v1495Stmt);
 	    mysql_close(conn);
 	    close_coda_file();
 
@@ -199,25 +199,19 @@ int main(int argc,char* argv[]){
 	    printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n\n", i, physEvCount);
 	    printf("Average Rate: %f Events/s\n\n", ((double)i)/((double)( timeEnd - timeStart )));
 
-	    //printf("Case 1: %i\nCase 2: %i\nCase 3: %i\nCase 4: %i\nCase 5: %i\nCase 6: %i\n\n",case1,case2,case3,case4,case5,case6);
-
 	    return 0;
 
 	} else {
+	    // If an error is hit while decoding an online file, it likely just means
+     	    // 	you need to wait for more events to be written.  Wait and try again.
 	    while ( status != SUCCESS ){
 		status = retry(i, physicsEvent);	
 	    }
 	}
     }
 
-     // If an error is hit while decoding an online file, it likely just means
-     // 	you need to wait for more events to be written.  Wait and try again.
-     
-
      // The last 4 hex digits will be 0x01cc for Prestart, Go Event, 
      //		and End Event, and 0x10cc for Physics Events
-     // This call grabs these specific last 4 digits: 0x76543210
-     //						            ^^^^
      switch (get_hex_bits(eventIdentifier,3,4)) {
 	case CODA_EVENT:
 		switch (eventIdentifier) {
@@ -278,7 +272,7 @@ int main(int argc,char* argv[]){
 
      // Clear the buffer, read the next event, and go back through the loop.
      if (eventIdentifier != EXIT_CASE) {
-	for(j=0;j<1000;j++) physicsEvent[j] = 0;
+	for(j=0;j<100000;j++) physicsEvent[j] = 0;
         status = read_coda_file(physicsEvent,100000);
         eventIdentifier = physicsEvent[1];
      }
@@ -288,31 +282,28 @@ int main(int argc,char* argv[]){
    if (tdcCount > 0) {
    	send_final_tdc(conn);
    }
-
    // If there is still latch data waiting to be sent to the server, send it
    if (latchCount > 0) {
    	send_final_latch(conn);
    }
-
    if (scalerCount > 0) {
    	send_final_scaler(conn);
    }
-
+   
    if (v1495Count > 0) {
 	send_final_v1495(conn);
    }
-
+   
    mysql_stmt_close(runStmt);
    mysql_stmt_close(spillStmt);
    mysql_stmt_close(codaEvStmt);
-   mysql_stmt_close(hitStmt);
-   mysql_stmt_close(v1495Stmt);
+//    mysql_stmt_close(hitStmt);
+//    mysql_stmt_close(v1495Stmt);
    mysql_close(conn);
    close_coda_file();
 
    cpuEnd = clock();
    timeEnd = time(NULL);
-
    cpuTotal = (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
 
    printf("CPU Time: %fs\n", cpuTotal);
