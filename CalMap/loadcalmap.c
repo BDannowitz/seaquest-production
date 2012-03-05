@@ -327,7 +327,8 @@ int create_table(MYSQL *conn){
 		"`asdqCableID` VARCHAR(32), \n"
 		"`asdqChannelID` INT, \n"
 		"`detectorName` CHAR(6), \n"
-		"`elementID` TINYINT UNSIGNED\n"
+		"`elementID` TINYINT UNSIGNED, \n"
+		"INDEX (rocID, boardID, channelID)\n"
 		") ENGINE=MyISAM DEFAULT CHARSET=latin1");
 	
 	if( mysql_query(conn, qryString) )
