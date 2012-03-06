@@ -506,7 +506,7 @@ int createSQL(MYSQL *conn, char *schema){
 	sprintf(spillInsert,"INSERT INTO Spill (spillID, runID, eventID, "
 		"spillType, rocID, vmeTime) VALUES (?,?,?,?,?,?)");
 	sprintf(codaEvInsert,"INSERT INTO Event (eventID, runID, spillID, "
-		"eventType, triggerBits, dataQuality) VALUES (?,?,?,?,?,?)");
+		"triggerBits, dataQuality) VALUES (?,?,?,?,?)");
 	sprintf(hitInsert,"INSERT INTO tempTDC (runID, spillID, eventID, rocID,"
 		"boardID, channelID, tdcTime, signalWidth, vmeTime) "
 		"VALUES (?,?,?,?,?,?,?,?,?)");
@@ -536,15 +536,14 @@ int createSQL(MYSQL *conn, char *schema){
 	for (i=0;i<3;i++) runBind[i].is_null= 0;
 	for (i=0;i<3;i++) runBind[i].length= 0; 
 
-	for (i=0;i<6;i++) spillBind[i].buffer_type= MYSQL_TYPE_LONG;
+	for (i=0;i<5;i++) spillBind[i].buffer_type= MYSQL_TYPE_LONG;
 	spillBind[0].buffer= (char *)&spillID;
 	spillBind[1].buffer= (char *)&runNum;
 	spillBind[2].buffer= (char *)&codaEventNum;
-	spillBind[3].buffer= (char *)&eventType;
-	spillBind[4].buffer= (char *)&ROCID;
-	spillBind[5].buffer= (char *)&spillVmeTime;
-	for (i=0;i<6;i++) spillBind[i].is_null= 0;
-	for (i=0;i<6;i++) spillBind[i].length= 0; 
+	spillBind[3].buffer= (char *)&ROCID;
+	spillBind[4].buffer= (char *)&spillVmeTime;
+	for (i=0;i<5;i++) spillBind[i].is_null= 0;
+	for (i=0;i<5;i++) spillBind[i].length= 0; 
 
 	for (i=0;i<6;i++) codaEvBind[i].buffer_type= MYSQL_TYPE_LONG;
 	codaEvBind[0].buffer= (char *)&codaEventNum;
@@ -620,7 +619,7 @@ int createSQL(MYSQL *conn, char *schema){
 
 	if( mysql_query(conn, "CREATE TABLE IF NOT EXISTS Event ("
 		"`eventID` INT NOT NULL, `runID` INT NOT NULL, `spillID` INT NOT NULL, "
-		"`eventType` INT NOT NULL, `triggerBits` INT NOT NULL, `dataQuality` INT NOT NULL, "
+		"`triggerBits` INT NOT NULL, `dataQuality` INT NOT NULL, "
 		"INDEX USING BTREE (eventID) )") )
     	{
 		printf("Event table creation error: %s\n", mysql_error(conn));

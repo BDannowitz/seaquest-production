@@ -83,7 +83,7 @@ MYSQL_STMT *hitStmt;
 MYSQL_STMT *v1495Stmt;
 MYSQL_BIND runBind[3];
 MYSQL_BIND spillBind[6];
-MYSQL_BIND codaEvBind[6];
+MYSQL_BIND codaEvBind[5];
 MYSQL_BIND hitBind[18000];
 MYSQL_BIND v1495Bind[16000];
 char *server;
