@@ -25,22 +25,25 @@ int runNum, runType, numEventsInRunThusFar, runTime;
 double goEventTime, endEventTime, stopCountTime;
 int codaEventNum, eventType, evLength, evNum, triggerBits, dataQuality;
 
+// Counters
+int slowControlCount;
+
 // ROC Values
 int ROCID, boardID; 
 
 // TDC Values
-int const max_tdc_rows = 200;
-int tdcCodaID[200], tdcRunID[200], tdcSpillID[200];
-int tdcROC[200], tdcBoardID[200], tdcChannelID[200];
-int tdcStopTime[200], tdcVmeTime[200], tdcSignalWidth[200];
+int const max_tdc_rows = 5000;
+int tdcCodaID[5000], tdcRunID[5000], tdcSpillID[5000];
+int tdcROC[5000], tdcBoardID[5000], tdcChannelID[5000];
+int tdcStopTime[5000], tdcVmeTime[5000], tdcSignalWidth[5000];
 int tdcCount;
 char errString[1028];
 
 // v1495 Values
-int const max_v1495_rows = 200;
-int v1495RocID[200], v1495CodaID[200], v1495RunID[200], v1495SpillID[200];
-int v1495ROC[200], v1495BoardID[200], v1495ChannelID[200];
-int v1495StopTime[200], v1495VmeTime[200];
+int const max_v1495_rows = 5000;
+int v1495RocID[5000], v1495CodaID[5000], v1495RunID[5000], v1495SpillID[5000];
+int v1495ROC[5000], v1495BoardID[5000], v1495ChannelID[5000];
+int v1495StopTime[5000], v1495VmeTime[5000];
 int v1495Count;
 
 // New TDC Values
@@ -81,8 +84,8 @@ MYSQL_STMT *v1495Stmt;
 MYSQL_BIND runBind[3];
 MYSQL_BIND spillBind[6];
 MYSQL_BIND codaEvBind[6];
-MYSQL_BIND hitBind[1800];
-MYSQL_BIND v1495Bind[1600];
+MYSQL_BIND hitBind[18000];
+MYSQL_BIND v1495Bind[16000];
 char *server;
 char *user;
 char *password;
@@ -113,7 +116,7 @@ enum { WAIT_TIME = 5 };
 int file_exists(const char * fileName);
 // -------------------------------------------------------
 // Handles command-line options
-int initialize(int argc,char* argv[]);
+int initialize(int argc, char* argv[]);
 // -------------------------------------------------------
 // Uses evOpen from evio library to open the CODA file
 //int open_coda_file(char *filename);
@@ -162,7 +165,7 @@ int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j);
 // -------------------------------------------------------
 // This function, if reading while on-line, will wait and try again if
 // 	an EOF is encountered before the End Event
-int retry(int codaEventCount, unsigned int physicsEvent[100000]);
+int retry(FILE *fp, int codaEventCount, unsigned int physicsEvent[100000]);
 // --------------------------------------------------------
 // This will make a 200-row insert statement with TDC data
 int make_data_query(MYSQL* conn);
