@@ -367,7 +367,7 @@ int load_data(MYSQL *conn){
   sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' \n"
 	"INTO TABLE %s.%s \n"
 	"FIELDS TERMINATED BY '\\t' \n"
-	"LINES TERMINATED BY '\\r\\n' \n"
+	"LINES TERMINATED BY '\\n' \n"
 	"IGNORE 1 LINES",
 	source, destination, mode_string);
 
