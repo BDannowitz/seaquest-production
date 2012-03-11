@@ -46,7 +46,7 @@
 int main(int argc,char* argv[]){
 
   // This is the array that holds CODA event information
-  unsigned int physicsEvent[100000];
+  unsigned int physicsEvent[40000];
   
   // MySQL variables
   MYSQL *conn;
@@ -111,10 +111,7 @@ int main(int argc,char* argv[]){
 	exit(1);
   }
 
-  // Initialize event array
-  for(i=0;i<100000;i++){
-    physicsEvent[i] = 0;
-  }
+  memset((void*)&physicsEvent, 0, sizeof(unsigned int)*40000);
 
   // Check if specified file exists
   if (file_exists(fileNameBak)){
@@ -156,13 +153,12 @@ int main(int argc,char* argv[]){
   timeStart = time(NULL);
   // Read the first event
   spillID = 0;
-  status = read_coda_file(physicsEvent,100000);
-  //printf("Read CODA File Status: %d\n",status);
+  status = read_coda_file(physicsEvent,40000);
   eventIdentifier = physicsEvent[1];
 
   for(i=0; eventIdentifier != EXIT_CASE; i++){ 
      // If an error is hit while decoding an offline file, something's wrong
-     if (status != SUCCESS){
+     while (status != SUCCESS){
 	//printf("End file name: %s\nExitst? %i\n", end_file_name, file_exists(end_file_name));
 	if (file_exists(end_file_name)){
 
@@ -182,12 +178,10 @@ int main(int argc,char* argv[]){
    
 
 	    printf("End File Found: %s\nExiting...\n\n", end_file_name);
-	    
+
 	    //mysql_stmt_close(runStmt);
 	    //mysql_stmt_close(spillStmt);	
 	    //mysql_stmt_close(codaEvStmt);
-// 	    mysql_stmt_close(hitStmt);	
-// 	    mysql_stmt_close(v1495Stmt);
 	    mysql_close(conn);
 	    close_coda_file();
 
@@ -195,7 +189,9 @@ int main(int argc,char* argv[]){
 	    timeEnd = time(NULL);
 
 	    cpuTotal = (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
-
+	    //printf("Case 1: %i, Case 2: %i, Case 3: %i, Case 4: %i, "
+	    //	"Case 5: %i, Case 6: %i, Case 7: %i, Case 8: %i\n",
+	    //	case1,case2,case3,case4,case5,case6,case7,case8);
 	    printf("CPU Time: %fs\n", cpuTotal);
 	    printf("Real Time: %f\n", (timeEnd - timeStart));
 	    printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n\n", i, physEvCount);
@@ -207,16 +203,32 @@ int main(int argc,char* argv[]){
 	    // If an error is hit while decoding an online file, it likely just means
      	    // 	you need to wait for more events to be written.  Wait and try again.
 	    if ( online == 0 ) { printf("ERROR: CODA Read Error in Offline Mode. No END file. Exiting...\n"); return 1; }
-	    while ( status != SUCCESS ){
- 		//printf("CLOSE CODA STATUS: %i\n",close_coda_file());
-		status = retry(fileNameBak, i, physicsEvent);
-	    }
+	    status = retry(fileNameBak, i, physicsEvent);
 	}
     }
 
      // The last 4 hex digits will be 0x01cc for Prestart, Go Event, 
      //		and End Event, and 0x10cc for Physics Events
-     switch (get_hex_bits(eventIdentifier,3,4)) {
+     switch (eventIdentifier & 0xFFFF) {
+
+	case PHYSICS_EVENT:
+	       	if((codaEventNum % 10000 == 0) && (codaEventNum != 0)) printf("%i Events\n", codaEventNum);
+
+ 		if (get_hex_bits(physicsEvent[1],7,4)==140){
+			// Start of run descriptor
+			if ( eventRunDescriptorSQL(conn, physicsEvent) ) {
+				printf("Beginning of Run Descriptor Event Processing Error\n");
+				return 1;
+			}
+			break;
+		} else {
+			if ( physicsEvent[4]!=1 ) {
+				if (eventSQL(conn, physicsEvent) ) return 1;
+				physEvCount++;
+			}
+			break;
+		}
+
 	case CODA_EVENT:
 		switch (eventIdentifier) {
 		   case PRESTART_EVENT:
@@ -245,23 +257,6 @@ int main(int argc,char* argv[]){
 		}
 		break;
 
-	case PHYSICS_EVENT:
-	       	if((codaEventNum % 10000 == 0) && (codaEventNum != 0)) printf("%i Events\n", codaEventNum);
-
- 		if (get_hex_bits(physicsEvent[1],7,4)==140){
-			// Start of run descriptor
-			if ( eventRunDescriptorSQL(conn, physicsEvent) ) {
-				printf("Beginning of Run Descriptor Event Processing Error\n");
-				return 1;
-			}
-			break;
-		} else {
-			if ( physicsEvent[4]!=1 ) {
-				if (eventSQL(conn, physicsEvent) ) return 1;
-				physEvCount++;
-			}
-			break;
-		}
 	case 0:
 		// Special case which requires waiting and retrying
 		status = retry(fileNameBak, (i-1), physicsEvent);
@@ -276,13 +271,8 @@ int main(int argc,char* argv[]){
 
      // Clear the buffer, read the next event, and go back through the loop.
      if (eventIdentifier != EXIT_CASE) {
-	for(j=0;j<100000;j++) physicsEvent[j] = 0;
-        status = read_coda_file(physicsEvent,100000);
-	if(status!=0) {
-		//printf("Read CODA File %d\n");
-		//printf("Closing CODA File: %d\n",close_coda_file());
-	}
-	//printf("Event: %i, Filename: %s, FileNameBak: %s\n", codaEventNum, fileName, fileNameBak);
+	memset((void*)&physicsEvent, 0, sizeof(unsigned int)*40000);
+        status = read_coda_file(physicsEvent,40000);
         eventIdentifier = physicsEvent[1];
      }
    }
@@ -313,9 +303,37 @@ int main(int argc,char* argv[]){
    timeEnd = time(NULL);
    cpuTotal = (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
 
+
+   printf("CPU Time: %fs\n\n", cpuTotal);
+
+   printf("CPU Time in Creating MySQL Tables: %fs (%f%%)\n\n", totalSQLcreate, (totalSQLcreate/cpuTotal)*100);
+
+   printf("CPU Time in JyTDC: %fs (%f%%)\n", totalJyTDC, (totalJyTDC/cpuTotal)*100);
+   printf("CPU Time in ReimerTDC: %fs (%f%%)\n", totalReimerTDC, (totalReimerTDC/cpuTotal)*100);
+   printf("CPU Time in WC TDC: %fs (%f%%)\n", totalWC, (totalWC/cpuTotal)*100);
+   printf("CPU Time in ZS WC TDC: %fs (%f%%)\n", totalZSWC, (totalZSWC/cpuTotal)*100);
+   printf("CPU Time in Non ZS TDC: %fs (%f%%)\n", totalTDC, (totalTDC/cpuTotal)*100);
+   printf("CPU Time in v1495: %fs (%f%%)\n\n", totalv1495, (totalv1495/cpuTotal)*100);
+
+   printf("CPU Time in TDC temp file writing: %fs (%f%%)\n", totalTDCfile, (totalTDCfile/cpuTotal)*100);
+   printf("CPU Time in TDC Data Loading: %fs (%f%%)\n", totalTDCload, (totalTDCload/cpuTotal)*100);
+   printf("CPU Time in TDC Mapping: %fs (%f%%)\n", totalTDCmap, (totalTDCmap/cpuTotal)*100);
+   printf("CPU Time in TDC Inserting into Hit: %fs (%f%%)\n", totalTDCinsert, (totalTDCinsert/cpuTotal)*100);
+   printf("CPU Time in Whole TDC Process: %fs (%f%%)\n\n", totalTDCwhole, (totalTDCwhole/cpuTotal)*100);
+
+   printf("CPU Time in v1495 temp file writing: %fs (%f%%)\n", totalv1495file, (totalv1495file/cpuTotal)*100);
+   printf("CPU Time in v1495 Data Loading: %fs (%f%%)\n", totalv1495load, (totalv1495load/cpuTotal)*100);
+   printf("CPU Time in v1495 Mapping: %fs (%f%%)\n", totalv1495map, (totalv1495map/cpuTotal)*100);
+   printf("CPU Time in v1495 Inserting into Hit: %fs (%f%%)\n\n", totalv1495insert, (totalv1495insert/cpuTotal)*100);
+
+   printf("CPU Time writing SlowControl temp files: %fs (%f%%)\n", totalSlowfile, (totalSlowfile/cpuTotal)*100);
+   printf("CPU Time submitting SlowControl Data: %fs (%f%%)\n\n", totalSlowload, (totalSlowload/cpuTotal)*100);
+
+   printf("CPU Time submitting CODA Events: %fs (%f%%)\n", totalCodaBind, (totalCodaBind/cpuTotal)*100);
+   printf("CPU Time submitting Spill Events: %fs (%f%%)\n\n", totalSpillBind, (totalSpillBind/cpuTotal)*100);
+
    printf("SlowControl Count: %i\n", slowControlCount);
-   printf("CPU Time: %fs\n", cpuTotal);
-   printf("Real Time: %f\n", (timeEnd - timeStart));
+   printf("Real Time: %f\n", (double)(timeEnd - timeStart));
    printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n\n", i, physEvCount);
    printf("Average Rate: %f Events/s\n\n", ((double)i)/((double)( timeEnd - timeStart )));
 
@@ -414,7 +432,7 @@ int initialize(int argc,char* argv[]){
   return 0;
 }
 
-int retry(char *file, int codaEventCount, unsigned int physicsEvent[100000]){
+int retry(char *file, int codaEventCount, unsigned int physicsEvent[40000]){
 // ================================================================
 //
 // This function is used in the case that a file is being decoded
@@ -459,7 +477,7 @@ int retry(char *file, int codaEventCount, unsigned int physicsEvent[100000]){
 	}
 	// If closed and opened successfully, loop through to the desired event.
 	for (k=0 ; k <= codaEventCount ; k++) 
-	{ status = read_coda_file(physicsEvent,100000); }
+	{ status = read_coda_file(physicsEvent,40000); }
 
   } else {
 	status = ERROR;
@@ -484,6 +502,8 @@ int createSQL(MYSQL *conn, char *schema){
 	char runInsert[1000];
 	char codaEvInsert[1000];
 	char spillInsert[1000];
+
+	beginSQLcreate = clock();
 		
 	sprintf(qryString, "CREATE DATABASE IF NOT EXISTS %s", schema);
 	
@@ -502,7 +522,7 @@ int createSQL(MYSQL *conn, char *schema){
 	}
 
 	if( mysql_query(conn, "CREATE TABLE IF NOT EXISTS Run ("
-		"`runID` MEDIUMINT UNSIGNED NOT NULL PRIMARY KEY, "
+		"`runID` SMALLINT UNSIGNED NOT NULL PRIMARY KEY, "
 		"`runTime` FLOAT NOT NULL, "
 		"`runDescriptor` TEXT, "
 		"INDEX USING BTREE (runID))") )
@@ -528,10 +548,10 @@ int createSQL(MYSQL *conn, char *schema){
 
 	if( mysql_query(conn, "CREATE TABLE IF NOT EXISTS Event ("
 		"`eventID` INT UNSIGNED NOT NULL, "
-		"`runID` MEDIUMINT UNSIGNED NOT NULL, "
+		"`runID` SMALLINT UNSIGNED NOT NULL, "
 		"`spillID` MEDIUMINT UNSIGNED NOT NULL, "
-		"`triggerBits` TINYINT UNSIGNED, "
-		"`dataQuality` TINYINT UNSIGNED, "
+		"`triggerBits` MEDIUMINT UNSIGNED, "
+		"`dataQuality` MEDIUMINT UNSIGNED, "
 		"INDEX USING BTREE (runID), "
 		"INDEX USING BTREE (spillID), "
 		"INDEX USING BTREE (eventID) )") )
@@ -701,7 +721,7 @@ int createSQL(MYSQL *conn, char *schema){
 	spillBind[0].buffer_type= 	MYSQL_TYPE_SHORT;
 	spillBind[0].buffer= 		(char *)&spillID;
 	spillBind[0].is_unsigned= 	1;
-	spillBind[1].buffer_type= 	MYSQL_TYPE_LONG;
+	spillBind[1].buffer_type= 	MYSQL_TYPE_SHORT;
 	spillBind[1].buffer= 		(char *)&runNum;
 	spillBind[1].is_unsigned= 	1;
 	spillBind[2].buffer_type= 	MYSQL_TYPE_LONG;
@@ -721,10 +741,10 @@ int createSQL(MYSQL *conn, char *schema){
 	codaEvBind[0].buffer_type= 	MYSQL_TYPE_LONG;
 	codaEvBind[0].is_unsigned= 	1;
 	codaEvBind[0].buffer= 		(char *)&codaEventNum;
-	codaEvBind[1].buffer_type= 	MYSQL_TYPE_LONG;
-	codaEvBind[1].is_unsigned= 	1;
+	codaEvBind[1].buffer_type= 	MYSQL_TYPE_SHORT;
 	codaEvBind[1].buffer= 		(char *)&runNum;
-	codaEvBind[1].buffer_type= 	MYSQL_TYPE_LONG;
+	codaEvBind[1].is_unsigned= 	1;
+	codaEvBind[2].buffer_type= 	MYSQL_TYPE_LONG;
 	codaEvBind[2].is_unsigned= 	1;
 	codaEvBind[2].buffer= 		(char *)&spillID;
 	codaEvBind[3].buffer_type= 	MYSQL_TYPE_SHORT;
@@ -743,6 +763,9 @@ int createSQL(MYSQL *conn, char *schema){
 	mysql_stmt_prepare(runStmt, runInsert, (unsigned int)strlen(runInsert));
 	mysql_stmt_prepare(codaEvStmt, codaEvInsert, (unsigned int)strlen(codaEvInsert));
 	mysql_stmt_prepare(spillStmt, spillInsert, (unsigned int)strlen(spillInsert));
+
+	endSQLcreate = clock();
+	totalSQLcreate += ((double)( endSQLcreate - beginSQLcreate ) / (double)CLOCKS_PER_SEC);
 
 	return 0;
 }
@@ -779,7 +802,7 @@ int runExists(MYSQL *conn, int runNumber){
 
 }
 
-int prestartSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
+int prestartSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 // ================================================================
 //
 //
@@ -909,7 +932,7 @@ int prestartSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 
 }
 
-int goEventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
+int goEventSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 // ================================================================
 //
 // This function hadles the 'Go Event' CODA Events, storing its
@@ -960,7 +983,7 @@ void showWarnings(MYSQL *conn){
 	//free(sqlString);
 }
 
-int eventRunDescriptorSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
+int eventRunDescriptorSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 
 	char text [10000]="";
 	char remnant [10000]="";
@@ -1005,7 +1028,7 @@ int eventRunDescriptorSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 
 }
 
-int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
+int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 // ================================================================
 //
 // This function takes the Slow Control Physics Event, which is purely
@@ -1020,36 +1043,20 @@ int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 //		1 on error
 
 
-	char text[10000];
-	char *ptr = NULL;
-	char *j = NULL;
-	char outputFileName[10000];
+	char outputFileName[100];
 	char qryString[100];
-	int value[4];
-	int i, num_cols, pid;
+	int i, pid, x;
 	FILE *fp;
-	int PTR_LEN;
-	
+	unsigned int number;
+
 	slowControlCount++;
 
-	PTR_LEN = evLength*8;
-
-	ptr = (char*) malloc (PTR_LEN+1);
-	j = (char*) malloc (PTR_LEN+1);
-	memset(ptr,'\0',PTR_LEN);
-	memset(j,'\0',PTR_LEN);
+	beginSlowfile = clock();
 
 	pid = getpid();
 
 	sprintf(outputFileName,".codaSlowControl.%i.temp", pid);
-	
-	// This puts the entirety of the ASCII event into one string
-	for (i=0;i<(evLength-2);i++) {
-		// The %.8lx ensures that no leading zeros are left off
-		sprintf(ptr, "%s%.8x", ptr, physicsEvent[i+4]);
-	}
-	ptr[PTR_LEN]='\0';
-	
+
 	// Open the temp file 
 	if (file_exists(outputFileName)) { remove(outputFileName); }
 	fp = fopen(outputFileName,"w");
@@ -1060,36 +1067,30 @@ int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 		// sprintf(text, "");
   		exit(1);
 	}
-	
-	//ptr = text;
-	i = 0;
 
-	// sscanf grabs the first two hex digits from the string until it gets 4 of em.
-	// Since the values are given parsed and reversed, ("HELLO" -> "LLEHO")
-	// 	This then reverses every four characters and writes them to file.
-	while ( sscanf(ptr, "%2x%s", &value[i%4], j) == 2 )
-		{
-		strcpy(ptr,j);
-		if((i%4)==3){
-			fprintf(fp, "%c%c%c%c", value[3], value[2], 
-				value[1], value[0]);
-			//printf("%c%c%c%c", value[3], value[2], 
-			//	value[1], value[0]);
+	for (x=4;x<(evLength+1);x++) {
+		number = physicsEvent[x];
+		for(i=0;i<4;i++){
+			fprintf(fp,"%c",(number&0xFF));
+			number = number>>8;
 		}
-		i++;
 	}
-	ptr[PTR_LEN]='\0';
-	// File MUST be closed before it can be loaded into MySQL
 
 	fclose(fp);
+
+	endSlowfile = clock();
+	totalSlowfile += ((double)( endSlowfile - beginSlowfile ) / (double)CLOCKS_PER_SEC);
 	
+
+	beginSlowload = clock();
+
 	// Assemble the MySQL query to load the file into the server.
 	// 	The LOCAL means the file is on the local machine
 	//	The IGNORE 2 LINES skips the date and list of field names and goes
 	//		right to the values.
 	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE SlowControl "
 			"FIELDS TERMINATED BY ' '", outputFileName);
-	
+
 	// Submit the query to the server	
 	if(mysql_query(conn, qryString))
 	{
@@ -1103,15 +1104,17 @@ int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 		printf("Warnings have occured from the slow control event upload:\n");
 		showWarnings(conn);
 	}
+
+	endSlowload = clock();
+
+	totalSlowload += ((double)( endSlowload - beginSlowload ) / (double)CLOCKS_PER_SEC);
 	
 	if (file_exists(outputFileName)) { remove(outputFileName); }
-	free(ptr);
-	free(j);
 
 	return 0;
 }
 
-int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 //
 //	Returns: 0 if successful
 //		 1 on error
@@ -1121,14 +1124,16 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	int windows = 0;
 	int channel = 0;
 	int channelVal = 0;
-	double Td, Ts, Tt;
+	float Td, Ts, Tt;
 	int val, k, l, m, n;
 	double signalWidth[64];
-	double tdcTime[64];
+	float tdcTime[64];
 	boardID = 0;
 	int i = 0;
 	int channelFired[64];
 	int channelFiredBefore[64];
+
+	beginTDC = clock();
 
 	// Word 1 contains boardID only
 	boardID = get_hex_bits(physicsEvent[j],7,4);
@@ -1186,10 +1191,16 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
+				endTDC = clock();
+				totalTDC += ((double)( endTDC - beginTDC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginTDC = clock();
+			
 				tdcTime[channel]=0;
 				signalWidth[channel]=0;
 			    }
@@ -1237,10 +1248,15 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
+				endTDC = clock();
+				totalTDC += ((double)( endTDC - beginTDC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginTDC = clock();
 				channelFired[channel]=1;
 				channelFiredBefore[channel]=1;
 				tdcTime[channel]=0;
@@ -1265,10 +1281,15 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
+				endTDC = clock();
+				totalTDC += ((double)( endTDC - beginTDC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginTDC = clock();
 				channelFiredBefore[channel]=1;
 				tdcTime[channel]=0;
 				signalWidth[channel]=0;
@@ -1305,7 +1326,7 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 
 }
 
-int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 //
 //	Returns: 0 if successful
 //		 1 on error
@@ -1315,14 +1336,16 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	int windows = 0;
 	int channel = 0;
 	int channelVal = 0;
-	double Td, Ts, Tt;
+	float Td, Ts, Tt;
 	int val, k, l, m, n;
 	double signalWidth[64];
-	double tdcTime[64];
+	float tdcTime[64];
 	boardID = 0;
 	int i = 0;
 	int channelFired[64];
 	int channelFiredBefore[64];
+
+	beginWC = clock();
 
 	// Word 1 contains boardID only
 	boardID = get_hex_bits(physicsEvent[j],7,4);
@@ -1381,10 +1404,16 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 
 				tdcCount++;
 
+				endWC = clock();
+				totalWC += ((double)( endWC - beginWC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginWC = clock();
+
 				tdcTime[channel]=0;
 				signalWidth[channel]=0;
 			    }
@@ -1432,10 +1461,16 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
+				endWC = clock();
+				totalWC += ((double)( endWC - beginWC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginWC = clock();
+
 				channelFired[channel]=1;
 				channelFiredBefore[channel]=1;
 				tdcTime[channel]=0;
@@ -1460,10 +1495,16 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
+				endWC = clock();
+				totalWC += ((double)( endWC - beginWC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginWC = clock();
+
 				channelFiredBefore[channel]=1;
 				tdcTime[channel]=0;
 				signalWidth[channel]=0;
@@ -1480,10 +1521,16 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
+				endWC = clock();
+				totalWC += ((double)( endWC - beginWC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginWC = clock();
+
 				channelFiredBefore[channel]=0;
 				tdcTime[channel]=0;
 				signalWidth[channel]=0;
@@ -1496,11 +1543,13 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 		}
 	}
 	
+	endWC = clock();
+
 	return j;
 
 }
 
-int eventZSWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventZSWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 //
 //	Returns: 0 if successful
 //		 1 on error
@@ -1510,16 +1559,18 @@ int eventZSWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	int windows = 0;
 	int channel = 0;
 	int channelVal = 0;
-	double Td, Ts, Tt;
+	float Td, Ts, Tt;
 	int val, k, l, m, n;
 	double signalWidth[64];
-	double tdcTime;
+	float tdcTime;
 	int window;
 	int word;
 	boardID = 0;
 	int i = 0;
 	int channelFiredBefore[64];
 	
+	beginZSWC = clock();
+
 	// Word 1 contains boardID only
 	boardID = get_hex_bits(physicsEvent[j],7,4);
 	j++;
@@ -1580,11 +1631,15 @@ int eventZSWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 
 				tdcCount++;
 
+				endZSWC = clock();
+				totalZSWC += ((double)( endZSWC - beginZSWC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
-				    // printf("Submitting Reimer Data!\n");
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+
+				beginZSWC = clock();
 			    }
 			    channelFiredBefore[channel]=window;
 			  }
@@ -1599,11 +1654,14 @@ int eventZSWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 
 	j++;
 
+	endZSWC = clock();
+	totalZSWC += ((double)( endZSWC - beginZSWC ) / (double)CLOCKS_PER_SEC);
+
 	return j;
 
 }
 
-int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 //
 //	Returns: 0 if successful
 //		 1 on error
@@ -1615,7 +1673,9 @@ int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	unsigned int ignore = 0;
 	int i = 0;
 	int k = 0;
-	
+	int x = 0;
+
+	beginv1495 = clock();
 
 	// Word 1 contains boardID only
 	boardID = get_hex_bits(physicsEvent[j],3,4);
@@ -1630,12 +1690,22 @@ int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 		// printf("StopTime: %.8x\n", physicsEvent[j+1]);
 		// printf("#DataWords: %.8x\n", physicsEvent[j]);
 		if ((get_hex_bits(physicsEvent[j],3,4))>255){
-			if (get_hex_bits(physicsEvent[j],3,4)==0xdead){
+			if (get_hex_bits(physicsEvent[j],3,4)==0xd1ad){
 				case4++;
-			} else {
+				//printf("Case: 4, Event: %i, RocID: %i, Board: %.4x, TriggerBits: %i, "
+				//"Channel exceeds 255 in v1495 format: %.8x\n", codaEventNum, 
+				//ROCID, boardID, triggerBits, physicsEvent[j]);
+			} else if (get_hex_bits(physicsEvent[j],3,4)==0xd2ad){ 
 				case6++;
+			} else if (get_hex_bits(physicsEvent[j],3,4)==0xd3ad){
+				case7++;
+			} else {
+				case8++; 
 			}
 		} else {
+			//printf("Case: 2, Event: %i, RocID: %i, Board: %.4x, TriggerBits: %i, "
+			//"Channel exceeds 255 in v1495 format: %.8x\n", codaEventNum, 
+			//ROCID, boardID, triggerBits, physicsEvent[j]);
 			case2++;
 		}	
 		ignore = 1;
@@ -1655,7 +1725,8 @@ int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	// Contains 0x000000xx where xx is number of channel entries
 	numChannels = (physicsEvent[j] & 0x0000FFFF);
 	if (numChannels > 255) { 
-		//printf("Event: %i, Board: %.4x, Channel exceeds 255 in v1495 format: %.8x\n", codaEventNum, boardID, physicsEvent[j]);
+		
+		//for (x=0;x<j+20;x++) printf("%.8x\n", physicsEvent[x]);
 		return j+2;
 	}
 	j++;
@@ -1684,19 +1755,25 @@ int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 		}
 		k++;
 
+		endv1495 = clock();
+		totalv1495 += ((double)( endv1495 - beginv1495 ) / (double)CLOCKS_PER_SEC);	
+
 		if (v1495Count == max_v1495_rows) {
 		    make_v1495_query(conn);
 		    v1495Count = 0;
 		}
-
+		beginv1495 = clock();
 	}
 	i++;
 	
+	endv1495 = clock();
+	totalv1495 += ((double)( endv1495 - beginv1495 ) / (double)CLOCKS_PER_SEC);
+
 	return j;
 
 }
 
-int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 //
 //	Returns: 0 if successful
 //		 1 on error
@@ -1704,20 +1781,21 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	stopCountTime = 0;
 	int boardNum = 0;
 	int windows = 0;
-	int channel = 0;
+	unsigned char channel = 0;
 	int channelVal = 0;
-	int Td, Ts, Tt;
+	float Td, Ts, Tt;
 	int val, k, l, m, n;
-	int signalWidth[64];
-	double tdcTime;
+	float tdcTime;
 	int window;
 	int word;
 	boardID = 0;
 	int i = 0;
-	int channelFiredBefore[64];
+	unsigned int channelFiredBefore[64];
+
+	beginReimerTDC = clock();
 
 	// Word 1 contains boardID only
-	boardID = get_hex_bits(physicsEvent[j],7,4);
+	boardID = (physicsEvent[j] >> 16);
 	// printf("boardID: %.8x\n",boardID);
 	j++;
 	
@@ -1739,11 +1817,8 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	}
 	j++;
 
-	for (k=0;k<64;k++){ 
-		// This flags the window in which a channel has fired previously
-		channelFiredBefore[k]=0xBD;
-	}
-
+	memset((void*)&channelFiredBefore, 0xBD, sizeof(unsigned int)*64);
+	
 	window = 0;
 	word = 0;
 	channel = 0;
@@ -1776,13 +1851,16 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 				
+				endReimerTDC = clock();
+				totalReimerTDC += ((double)( endReimerTDC - beginReimerTDC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+				beginReimerTDC = clock();
 			    }
 			    channelFiredBefore[channel]=window;
-			    
 			  }
 			  channel++;
 			}
@@ -1795,12 +1873,15 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	}
 
 	j++;
+	
+	endReimerTDC = clock();
+	totalReimerTDC += ((double)( endReimerTDC - beginReimerTDC ) / (double)CLOCKS_PER_SEC);
 
 	return j;
 
 }
 
-int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 //
 //	Returns: 0 if successful
 //		 1 on error
@@ -1808,9 +1889,9 @@ int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	stopCountTime = 0;
 	int windows = 0;
 	int channel = 0;
-	int Td, Ts, Tt;
+	float Td, Ts, Tt;
 	int val;
-	double tdcTime;
+	float tdcTime;
 	int window;
 	int word, zsword;
 	boardID = 0;
@@ -1818,6 +1899,8 @@ int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 	int k;
 	int buf = 0;
 	int channelFiredBefore[64];
+
+	beginJyTDC = clock();
 
 	// Word 1 contains boardID only
 	boardID = get_hex_bits(physicsEvent[j],7,4);
@@ -1893,10 +1976,14 @@ int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 				
+				endJyTDC = clock();
+				totalJyTDC += ((double)( endJyTDC - beginJyTDC ) / (double)CLOCKS_PER_SEC);
+
 				if (tdcCount == max_tdc_rows) {
 				    make_tdc_query(conn);
 				    tdcCount = 0;
 				}
+				beginJyTDC = clock();
 			    }
 			    channelFiredBefore[channel]=window;
 			  }
@@ -1910,11 +1997,15 @@ int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 		zsword++;
 		
 	}
+
+	endJyTDC = clock();
+	totalJyTDC += ((double)( endJyTDC - beginJyTDC ) / (double)CLOCKS_PER_SEC);
+
 	return j;
 
 }
 
-int eventLatchSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventLatchSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
     int i, k;
     unsigned int num;
 
@@ -1973,7 +2064,7 @@ int eventLatchSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 
 }
 
-int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
+int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
     int i, k;
     unsigned int num;
 
@@ -2005,15 +2096,16 @@ int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j){
 
 }
 
-int eventTriggerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j) {
+int eventTriggerSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j) {
 	
 	triggerBits = physicsEvent[j];
+	//printf("Event: %i, RocID: %i, TriggerBits: %.8x\n",codaEventNum, ROCID, physicsEvent[j]);
 	j++;
 
 	return j;
 }
 
-int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
+int eventSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 // ================================================================
 // Handles Physics Events.  Stores general header information and 
 //	sends the different types of Physics Events to their 
@@ -2025,12 +2117,13 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 	int headerLength = 0;
 	int headerCode = 0;
 	char sqlCodaEventQuery[256];
-	int i, j, k, temproc, v, x;
+	int i, j, k, temproc, v, x, submit;
 	evLength = 0;
 	eventType = 0;
 	dataQuality = 0;
 	triggerBits = 0;
 	codaEventNum = 0;
+	submit=0;
 	
 	evLength = physicsEvent[0];
 	eventCode = physicsEvent[1];
@@ -2072,6 +2165,7 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 		    while(j<=v){
 			j = format(conn, physicsEvent, j, v);
 		    }
+		    submit = 1;
 		  }
 		  break;
 
@@ -2081,6 +2175,7 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 		    	printf("Slow Control Event Processing Error\n");
 		    	return 1;
 		    }
+		    submit = 0;
 		    break;
 
 		case 140:
@@ -2089,6 +2184,7 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 		    	printf("Start of Run Desctiptor Event Processing Error\n");
 		    	return 1;
 		    }
+		    submit = 0;
 		    break;
 
 		case 11:
@@ -2121,12 +2217,19 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 			j++;
 			mysql_stmt_bind_param(spillStmt, spillBind);
 				
+
+			beginSpillBind = clock();
+
 			if (mysql_stmt_execute(spillStmt))
 			{
 				printf("Spill Insert Error: %s\n", mysql_error(conn));
 				return 1;
 			}
 			
+			endSpillBind = clock();
+
+        		totalSpillBind += ((double)( endSpillBind - beginSpillBind ) / (double)CLOCKS_PER_SEC);
+
 			e906flag = physicsEvent[j];
 			j++;
 			if ( rocEvLength < 5 ) { j = v+1; }
@@ -2134,6 +2237,7 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 				j = format(conn, physicsEvent, j, v);
 			}
 		    }
+		    submit = 0;
 		    break;
 
 		case 12:
@@ -2163,6 +2267,8 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 			spillVmeTime = physicsEvent[j];
 			j++;
 			
+			beginSpillBind = clock();
+
 			mysql_stmt_bind_param(spillStmt, spillBind);
 				
 			if (mysql_stmt_execute(spillStmt))
@@ -2170,6 +2276,10 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 				printf("Spill Insert Error: %s\n", mysql_error(conn));
 				return 1;
 			}
+
+			endSpillBind = clock();
+
+        		totalSpillBind += ((double)( endSpillBind - beginSpillBind ) / (double)CLOCKS_PER_SEC);
 			
 			e906flag = physicsEvent[j];
 			j++;
@@ -2177,30 +2287,38 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
 			    while(j<=v){
 				j = format(conn, physicsEvent, j, v);
 			    }
-			}
+		    }
+		    submit = 0;
 		    break;
 
 		default:
 		    // Awaiting further event types
 		    printf("Unknown event type: %x\n", eventType);
+		    submit = 0;
 		    break;
 	}	
 
-	evNum++;
+	if(submit){
 
-	mysql_stmt_bind_param(codaEvStmt, codaEvBind);
+		beginCodaBind = clock();
 
-	if (mysql_stmt_execute(codaEvStmt))
-    	{
-		printf("Event Insert Error: %s\n", mysql_error(conn));
-		return 1;
+		mysql_stmt_bind_param(codaEvStmt, codaEvBind);
+
+		if (mysql_stmt_execute(codaEvStmt))
+    		{
+			printf("Event Insert Error: %s\n", mysql_error(conn));
+			return 1;
+		}
+
+		endCodaBind = clock();
+
+        	totalCodaBind += ((double)( endCodaBind - beginCodaBind ) / (double)CLOCKS_PER_SEC);
 	}
-	
 	return 0;
 
 }
 
-int format(MYSQL *conn, unsigned int physicsEvent[100000], int j, int v) {
+int format(MYSQL *conn, unsigned int physicsEvent[40000], int j, int v) {
 
 	int x;
 
@@ -2264,7 +2382,7 @@ int format(MYSQL *conn, unsigned int physicsEvent[100000], int j, int v) {
 
 }
 
-int endEventSQL(MYSQL *conn, unsigned int physicsEvent[100000]){
+int endEventSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 // ================================================================
 //
 // Handles End Event CODA Events.
@@ -2291,11 +2409,14 @@ int make_tdc_query(MYSQL* conn){
 	int pid, k;
 	FILE *fp;
 
+	beginTDCwhole = clock();
+	
 	if( mysql_query(conn, "DELETE FROM tempHit") ) {
 		printf("Deleting tempHit Data Error: %s\n", mysql_error(conn));
    	}
 	
-	
+	beginTDCfile = clock();
+
 	// This method prints the data out to file and then uploads directly via LOAD DATA INFILE
 	pid = getpid();
 
@@ -2320,9 +2441,20 @@ int make_tdc_query(MYSQL* conn){
 	// File MUST be closed before it can be loaded into MySQL
 	fclose(fp);
 
+	endTDCfile = clock();
+
+        totalTDCfile += ((double)( endTDCfile - beginTDCfile ) / (double)CLOCKS_PER_SEC);
+
+
+
+
+
+
 	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE tempHit "
 			"FIELDS TERMINATED BY ' ' LINES TERMINATED BY '\\n'", outputFileName);
 	
+	beginTDCload = clock();
+
 	// Submit the query to the server	
 	if(mysql_query(conn, qryString))
 	{
@@ -2331,23 +2463,29 @@ int make_tdc_query(MYSQL* conn){
 		return 1;
 	}
 
+	endTDCload = clock();
+
+        totalTDCload += ((double)( endTDCload - beginTDCload ) / (double)CLOCKS_PER_SEC);
+
 	if( mysql_warning_count(conn) > 0 )
 	{
 		printf("Warnings have occured from the Hit upload:\n");
 		showWarnings(conn);
 	}
-	
+
 	remove(outputFileName);
-	
+
 	// Clear the arrays
-	memset((void*)&tdcChannelID, 0, sizeof(int)*max_tdc_rows);
-	memset((void*)&tdcCodaID, 0, sizeof(int)*max_tdc_rows);
-	memset((void*)&tdcRunID, 0, sizeof(int)*max_tdc_rows);
-	memset((void*)&tdcSpillID, 0, sizeof(int)*max_tdc_rows);
-	memset((void*)&tdcROC, 0, sizeof(int)*max_tdc_rows);
-	memset((void*)&tdcBoardID, 0, sizeof(int)*max_tdc_rows);
-	memset((void*)&tdcStopTime, 0, sizeof(double)*max_tdc_rows);
-	memset((void*)&tdcVmeTime, 0, sizeof(int)*max_tdc_rows);
+	memset((void*)&tdcChannelID, 0, sizeof(unsigned char)*max_tdc_rows);
+	memset((void*)&tdcCodaID, 0, sizeof(unsigned int)*max_tdc_rows);
+	memset((void*)&tdcRunID, 0, sizeof(unsigned short int)*max_tdc_rows);
+	memset((void*)&tdcSpillID, 0, sizeof(unsigned short int)*max_tdc_rows);
+	memset((void*)&tdcROC, 0, sizeof(unsigned char)*max_tdc_rows);
+	memset((void*)&tdcBoardID, 0, sizeof(unsigned short int)*max_tdc_rows);
+	memset((void*)&tdcStopTime, 0, sizeof(float)*max_tdc_rows);
+	memset((void*)&tdcVmeTime, 0, sizeof(unsigned short)*max_tdc_rows);
+
+	beginTDCmap = clock();
 
 	if (mysql_query(conn, "UPDATE tempHit t, Mapping m\n"
                 "SET t.detectorName = m.detectorName, "
@@ -2360,13 +2498,24 @@ int make_tdc_query(MYSQL* conn){
         }
 
 	if (mysql_query(conn, "UPDATE tempHit\n"
-                "SET driftDistance = tdcTime*0.005") )
+                "SET driftDistance = tdcTime*0.005\n"
+		"WHERE detectorName NOT LIKE 'H%'") )
         {
                 printf("Error (101): %s\n", mysql_error(conn));
                 return 1;
         }
+
+	endTDCmap = clock();
+
+        totalTDCmap += ((double)( endTDCmap - beginTDCmap ) / (double)CLOCKS_PER_SEC);
 	
-	if (mysql_query(conn, "INSERT INTO Hit (eventID, runID, spillID, "
+
+
+
+
+	beginTDCinsert = clock();
+
+	if (mysql_query(conn, "INSERT DELAYED INTO Hit (eventID, runID, spillID, "
 		"rocID, boardID, channelID, detectorName, elementID, tdcTime, driftDistance, vmeTime) "
 		"SELECT eventID, runID, spillID, rocID, boardID, channelID, "
 		"detectorName, elementID, tdcTime, driftDistance, vmeTime FROM tempHit") )
@@ -2374,12 +2523,20 @@ int make_tdc_query(MYSQL* conn){
 		printf("Error (102): %s\n", mysql_error(conn));
                 return 1;
         }
-	
+
+	endTDCinsert = clock();
+        totalTDCinsert += ((double)( endTDCinsert - beginTDCinsert ) / (double)CLOCKS_PER_SEC);
+
+
+
 	if (mysql_query(conn, "DELETE FROM tempHit") )
 	{
 		printf("Error (103): %s\n", mysql_error(conn));
                 return 1;
         }
+
+	endTDCwhole = clock();
+        totalTDCwhole += ((double)( endTDCwhole - beginTDCwhole ) / (double)CLOCKS_PER_SEC);
 	
 	return 0;
 
@@ -2396,6 +2553,9 @@ int make_v1495_query(MYSQL* conn){
 		printf("Deleting tempHit Table Error: %s\n", mysql_error(conn));
    	}
 	
+
+	beginv1495file = clock();
+
 	// This method prints the data out to file and then uploads directly via LOAD DATA INFILE
 	pid = getpid();
 
@@ -2419,6 +2579,14 @@ int make_v1495_query(MYSQL* conn){
 	// File MUST be closed before it can be loaded into MySQL
 	fclose(fp);
 
+	endv1495file = clock();
+        totalv1495file += ((double)( endv1495file - beginv1495file ) / (double)CLOCKS_PER_SEC);
+
+
+
+
+	beginv1495load = clock();
+
 	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE tempHit "
 			"FIELDS TERMINATED BY ' ' LINES TERMINATED BY '\\n'", outputFileName);
 	
@@ -2429,6 +2597,10 @@ int make_v1495_query(MYSQL* conn){
 		printf("Load v1495 Data Error: %s\n", mysql_error(conn));
 		return 1;
 	}
+
+	endv1495load = clock();
+
+        totalv1495load += ((double)( endv1495load - beginv1495load ) / (double)CLOCKS_PER_SEC);
 
 	if( mysql_warning_count(conn) > 0 )
 	{
@@ -2448,6 +2620,8 @@ int make_v1495_query(MYSQL* conn){
 	memset((void*)&v1495StopTime, 0, sizeof(double)*max_v1495_rows);
 	memset((void*)&v1495VmeTime, 0, sizeof(int)*max_v1495_rows);
 
+	beginv1495map = clock();
+
 	if (mysql_query(conn, "UPDATE tempHit t, Mapping m\n"
                 "SET t.detectorName = m.detectorName, "
 		"t.elementID = m.elementID\n"
@@ -2457,8 +2631,16 @@ int make_v1495_query(MYSQL* conn){
                 printf("Error (101): %s\n", mysql_error(conn));
                 return 1;
         }
+
+	endv1495map = clock();
+        totalv1495map += ((double)( endv1495map - beginv1495map ) / (double)CLOCKS_PER_SEC);
 	
-	if (mysql_query(conn, "INSERT INTO TriggerHit (eventID, runID, spillID, "
+
+
+
+	beginv1495insert = clock();
+
+	if (mysql_query(conn, "INSERT DELAYED INTO TriggerHit (eventID, runID, spillID, "
 		"rocID, boardID, channelID, detectorName, elementID, tdcTime, vmeTime) "
 		"SELECT eventID, runID, spillID, rocID, boardID, channelID, "
 		"detectorName, elementID, tdcTime, vmeTime FROM tempHit") )
@@ -2466,7 +2648,11 @@ int make_v1495_query(MYSQL* conn){
 		printf("Error (102): %s\n", mysql_error(conn));
                 return 1;
         }
+
+	endv1495insert = clock();
+        totalv1495insert += ((double)( endv1495insert - beginv1495insert ) / (double)CLOCKS_PER_SEC);
 	
+
 	if (mysql_query(conn, "DELETE FROM tempHit") )
 	{
 		printf("Error (103): %s\n", mysql_error(conn));
@@ -2548,7 +2734,7 @@ int make_latch_query(MYSQL *conn){
                 return 1;
         }
 
-	if (mysql_query(conn, "INSERT INTO Hit (runID, eventID, spillID, vmeTime, "
+	if (mysql_query(conn, "INSERT DELAYED INTO Hit (runID, eventID, spillID, vmeTime, "
 		"rocID, boardID, channelID, detectorName, elementID) "
 		"SELECT runID, eventID, spillID, vmeTime, rocID, boardID, channelID, "
 		"detectorName, elementID FROM tempHit") )

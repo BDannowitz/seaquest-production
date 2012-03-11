@@ -7,6 +7,7 @@
 #include <mysql.h>
 #include <string.h>
 #include <unistd.h>
+#include <regex.h>
 #include <time.h>
 
 // EVIO Values
@@ -38,11 +39,11 @@ unsigned short int boardID;
 
 // TDC Values
 int const max_tdc_rows = 5000;
-int tdcCodaID[5000], tdcRunID[5000], tdcSpillID[5000];
-int tdcROC[5000], tdcBoardID[5000], tdcChannelID[5000];
-int tdcVmeTime[5000];
-double tdcStopTime[5000];
-int tdcCount;
+unsigned int tdcCodaID[5000];
+unsigned char tdcROC[5000], tdcChannelID[5000];
+unsigned short int tdcBoardID[5000], tdcRunID[5000], tdcSpillID[5000], tdcVmeTime[5000];
+float tdcStopTime[5000];
+unsigned short int tdcCount;
 char errString[1028];
 
 // v1495 Values
@@ -72,11 +73,11 @@ int scalerCount;
 
 // New TDC Values
 double const trigger_pattern[8] = { 0.0, 0.0, 0.0, 0.0, 10.0, 2.5, 5.0, 7.5 };
-double const channel_pattern[8] = { 10.0, 2.5, 5.0, 7.5, 0.0, 7.5, 5.0, 2.5 };
+double const channel_pattern[8] = { 10.0, 2.5, 5.0, 7.5, 0.0, 0.0, 0.0, 0.0 };
 
 // WC TDC Values
 double const wc_trigger_pattern[8] = { 0.0, 0.0, 0.0, 0.0, 40.0, 10.0, 20.0, 30.0 };
-double const wc_channel_pattern[8] = { 40.0, 10.0, 20.0, 30.0, 0.0, 30.0, 20.0, 10.0 };
+double const wc_channel_pattern[8] = { 40.0, 10.0, 20.0, 30.0, 0.0, 0.0, 0.0, 0.0 };
 
 // Some global variables
 double vmeTime;
@@ -96,8 +97,63 @@ char *password;
 char *database;
 char *schema;
 
+
+// Benchmarking Values
+
+clock_t beginSQLcreate, endSQLcreate;
+double totalSQLcreate;
+
+clock_t beginTDCfile, endTDCfile;
+double totalTDCfile;
+clock_t beginTDCload, endTDCload;
+double totalTDCload;
+clock_t beginTDCmap, endTDCmap;
+double totalTDCmap;
+clock_t beginTDCinsert, endTDCinsert;
+double totalTDCinsert;
+clock_t beginTDCwhole, endTDCwhole;
+double totalTDCwhole;
+
+clock_t beginv1495file, endv1495file;
+double totalv1495file;
+clock_t beginv1495load, endv1495load;
+double totalv1495load;
+clock_t beginv1495map, endv1495map;
+double totalv1495map;
+clock_t beginv1495insert, endv1495insert;
+double totalv1495insert;
+
+clock_t beginSlowfile, endSlowfile;
+double totalSlowfile;
+clock_t beginSlowload, endSlowload;
+double totalSlowload;
+
+clock_t beginCodaBind, endCodaBind;
+double totalCodaBind;
+
+clock_t beginSpillBind, endSpillBind;
+double totalSpillBind;
+
+clock_t beginJyTDC, endJyTDC;
+double totalJyTDC;
+
+clock_t beginReimerTDC, endReimerTDC;
+double totalReimerTDC;
+
+clock_t beginv1495, endv1495;
+double totalv1495;
+
+clock_t beginZSWC, endZSWC;
+double totalZSWC;
+
+clock_t beginWC, endWC;
+double totalWC;
+
+clock_t beginTDC, endTDC;
+double totalTDC;
+
 // v1495 debugging variables
-int case1, case2, case3, case4, case5, case6;
+int case1, case2, case3, case4, case5, case6, case7, case8;
 
 // Some Constants used.
 enum { SUCCESS = 0 };
@@ -129,7 +185,7 @@ int initialize(int argc, char* argv[]);
 int close_coda_file();
 // -------------------------------------------------------
 // Uses evRead from the evio library to fill the buffer with the next event
-int read_coda_file(unsigned int physicsEvent[100000],int evnum);
+int read_coda_file(unsigned int physicsEvent[40000],int evnum);
 // -------------------------------------------------------
 // Retrieves a certain number of hex digits from an unsigned int starting
 // 	a certain number of digits from the right of the number
@@ -150,26 +206,26 @@ int get_bin_bit(unsigned int binNum, int numBitFromRight);
 int createSQL(MYSQL *conn, char *schema);
 // -------------------------------------------------------
 // This function handles prestart-type CODA events
-int prestartSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int prestartSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles goEvent-type CODA events
-int goEventSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int goEventSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles physics-type CODA events
-int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int eventSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles endEvent-type CODA events
-int endEventSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int endEventSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles Spill Begin and Spill End events
-int eventSpillSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int eventSpillSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function hanldes Scaler-type events
-int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j);
+int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j);
 // -------------------------------------------------------
 // This function, if reading while on-line, will wait and try again if
 // 	an EOF is encountered before the End Event
-int retry(char *file, int codaEventCount, unsigned int physicsEvent[100000]);
+int retry(char *file, int codaEventCount, unsigned int physicsEvent[40000]);
 // --------------------------------------------------------
 // This will make a 200-row insert statement with TDC data
 int make_data_query(MYSQL* conn);
@@ -297,7 +353,7 @@ int get_bin_bits(unsigned int binNum, int numBitFromRight, int numBits)
     return binBits;
 }
 
-int read_coda_file(unsigned int physicsEvent[100000],int evnum)
+int read_coda_file(unsigned int physicsEvent[40000],int evnum)
 {
 // ================================================================
 //
