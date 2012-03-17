@@ -103,6 +103,9 @@ char *schema;
 clock_t beginSQLcreate, endSQLcreate;
 double totalSQLcreate;
 
+time_t beginTimeIndexing, endTimeIndexing;
+double totalTimeIndexing;
+
 clock_t beginTDCfile, endTDCfile;
 double totalTDCfile;
 clock_t beginTDCload, endTDCload;
@@ -114,6 +117,14 @@ double totalTDCinsert;
 clock_t beginTDCwhole, endTDCwhole;
 double totalTDCwhole;
 
+time_t beginTimeTDCload, endTimeTDCload;
+double totalTimeTDCload;
+time_t beginTimeTDCmap, endTimeTDCmap;
+double totalTimeTDCmap;
+time_t beginTimeTDCinsert, endTimeTDCinsert;
+double totalTimeTDCinsert;
+
+
 clock_t beginv1495file, endv1495file;
 double totalv1495file;
 clock_t beginv1495load, endv1495load;
@@ -123,10 +134,20 @@ double totalv1495map;
 clock_t beginv1495insert, endv1495insert;
 double totalv1495insert;
 
+time_t beginTimev1495load, endTimev1495load;
+double totalTimev1495load;
+time_t beginTimev1495map, endTimev1495map;
+double totalTimev1495map;
+time_t beginTimev1495insert, endTimev1495insert;
+double totalTimev1495insert;
+
+
 clock_t beginSlowfile, endSlowfile;
 double totalSlowfile;
 clock_t beginSlowload, endSlowload;
 double totalSlowload;
+time_t beginTimeSlowload, endTimeSlowload;
+double totalTimeSlowload;
 
 clock_t beginCodaBind, endCodaBind;
 double totalCodaBind;
@@ -152,6 +173,11 @@ double totalWC;
 clock_t beginTDC, endTDC;
 double totalTDC;
 
+clock_t cpuStart, cpuEnd;
+time_t timeStart, timeEnd; 
+double timeTotal;
+double cpuTotal; 
+
 // v1495 debugging variables
 int case1, case2, case3, case4, case5, case6, case7, case8;
 
@@ -166,7 +192,7 @@ enum { PHYSICS_EVENT = 0x10cc };
 enum { EXIT_CASE = 0x66666666 };
 enum { ON = 1 };
 enum { OFF = 0 };
-enum { WAIT_TIME = 30 };
+enum { WAIT_TIME = 5 };
 
 
 // =======================================================
@@ -225,7 +251,7 @@ int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j);
 // -------------------------------------------------------
 // This function, if reading while on-line, will wait and try again if
 // 	an EOF is encountered before the End Event
-int retry(char *file, int codaEventCount, unsigned int physicsEvent[40000]);
+int retry(char *file, long unsigned int oldfilesize, int codaEventCount, unsigned int physicsEvent[40000]);
 // --------------------------------------------------------
 // This will make a 200-row insert statement with TDC data
 int make_data_query(MYSQL* conn);

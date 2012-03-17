@@ -25,14 +25,13 @@
 //
 //	For decoding a file while its still being written:
 //
-//	./decode -f /full/path/and/filename.dat -m 1 -d test_output -s 10000
+//	./decode -f /full/path/and/filename.dat -m 1 -d test_output
 //
 //	For decoding a finished file, sending to a host other than default:
 //
 //	./decode -f /full/path/and/filename.dat -m 0 -h host -u user 
 //		 -p password -d test_output
 //
-
 //
 //==========================================================================//
 /////////////////////////////////////////////////////////////////////////// */
@@ -45,76 +44,77 @@
 
 int main(int argc,char* argv[]){
 
-  // This is the array that holds CODA event information
-  unsigned int physicsEvent[40000];
-  
-  // MySQL variables
-  MYSQL *conn;
-  database = "";
-  const int PORT = 0;
-  char *UNIX_SOCKET = NULL;
-  const int CLIENT_FLAG = 0;
-  unsigned int* enableLoadDataInfile;
+// This is the array that holds CODA event information
+unsigned int physicsEvent[40000];
 
-  // File handling variables
-  FILE *fp;
-  long int fileSize;
+// MySQL variables
+MYSQL *conn;
+database = "";
+const int PORT = 0;
+char *UNIX_SOCKET = NULL;
+const int CLIENT_FLAG = 0;
+int sleepCounter = 0;
+unsigned int* enableLoadDataInfile;
 
-  // Benchmarking variables
-  clock_t cpuStart, cpuEnd;
-  time_t timeStart, timeEnd;
-  double cpuTotal; 
+// File handling variables
+FILE *fp;
+long unsigned int fileSize;
+int stopped = 0;
 
-  case1 = 0; case2 = 0; case3 = 0; case4 = 0; case5 = 0; case6 = 0;
 
-  // Some other variables used
-  int i, j, physEvCount, status;
-  unsigned int eventIdentifier;
+case1 = 0; case2 = 0; case3 = 0; case4 = 0; case5 = 0; case6 = 0;
 
-  char *fileNameBak;
+// Some other variables used
+int i, j, physEvCount, status;
+unsigned int eventIdentifier;
 
-  // Initialize some important values
-  physEvCount = 0;
-  codaEventNum = 0;
-  tdcCount = 0;
-  v1495Count = 0;
-  latchCount = 0;
-  force = 0;
-  spillID = 0;
-  slowControlCount = 0;
-  fileNameBak = malloc(10 * sizeof (*fileNameBak));
-  fileName = malloc(10 * sizeof (*fileName));
-  sprintf(end_file_name, "");
+char *fileNameBak;
 
-  // Handle the command-line options
-  if (initialize(argc, argv)) return 1;
-  sprintf(fileNameBak,"%s",fileName);
-  // Initialize MySQL database connection
-  conn = mysql_init(NULL);
+// Initialize some important values
+cpuTotal = 0.0;
+timeTotal = 0.0;
+physEvCount = 0;
+codaEventNum = 0;
+tdcCount = 0;
+v1495Count = 0;
+latchCount = 0;
+force = 0;
+spillID = 0;
+slowControlCount = 0;
+fileNameBak = malloc(10 * sizeof (*fileNameBak));
+fileName = malloc(10 * sizeof (*fileName));
+sprintf(end_file_name, "");
 
-  // Must set this option for the C API to allow loading data from
-  // 	local file (like we do for slow control events)
-  mysql_options(conn, MYSQL_OPT_LOCAL_INFILE, NULL);
+// Handle the command-line options
+if (initialize(argc, argv)) return 1;
+sprintf(fileNameBak,"%s",fileName);
 
-  // Connect to the MySQL database
-  if (!mysql_real_connect(conn, server, user, password, database, 
+// Initialize MySQL database connection
+conn = mysql_init(NULL);
+
+// Must set this option for the C API to allow loading data from
+// 	local file (like we do for slow control events)
+mysql_options(conn, MYSQL_OPT_LOCAL_INFILE, NULL);
+
+// Connect to the MySQL database
+if (!mysql_real_connect(conn, server, user, password, database, 
 	PORT, UNIX_SOCKET, CLIENT_FLAG)) {
-       	printf("Database Connection ERROR: %s\n\n", mysql_error(conn));
-       	return 1;
-  } else {
-  	printf("Database connection: Success\n\n");
-  }
+	printf("Database Connection ERROR: %s\n\n", mysql_error(conn));
+	return 1;
+} else {
+	printf("Database connection: Success\n\n");
+}
 
-  // Create database and tables if they are not currently there.
-  if (createSQL(conn, schema)){
+// Create database and tables if they are not currently there.
+if (createSQL(conn, schema)){
 	printf("SQL Table Creation ERROR\n");
 	exit(1);
-  }
+}
 
-  memset((void*)&physicsEvent, 0, sizeof(unsigned int)*40000);
+memset((void*)&physicsEvent, 0, sizeof(unsigned int)*40000);
 
-  // Check if specified file exists
-  if (file_exists(fileNameBak)){
+// Check if specified file exists
+if (file_exists(fileNameBak)){
 	// Get file size
 	fp = fopen(fileNameBak, "r");
 	fseek(fp, 0L, SEEK_END);
@@ -123,98 +123,203 @@ int main(int argc,char* argv[]){
 	// evOpen will return an error if the file is less than
 	//	a certain size, so wait until the file is big enough.
 	//	...if the file *is* currently being written
-	while (fileSize < 32768 && online == ON){
-		sleep(5);
+	while (fileSize < 32768 && online == ON && sleepCounter<20){
+		sleep(15);
 		// Get file size again
 		printf("File too small. Waiting for more...\n");
 		fseek(fp, 0L, SEEK_END);
 		fileSize = ftell(fp);
+		sleepCounter++;
 	}
-	//printf("Closing file from testing... %d\n",fclose(fp));
-        printf("Loading... \"%s\"\n", fileNameBak);
-  	status = open_coda_file(fileNameBak);
+	if (sleepCounter==20){
+		printf("File not large enough; Wait timeout. Exiting...\n\n");
+		return 1;
+	}
+	printf("Loading... \"%s\"\n", fileNameBak);
+	fclose(fp);
+	status = open_coda_file(fileNameBak);
 	//printf("Open CODA File Status: %d\n",status);
 
-        if (status == SUCCESS){
+	if (status == SUCCESS){
 		printf("Opening CODA File Status: OK!\n\n");
 	}
-        else { 
+	else { 
 		printf("Problem Opening CODA File\nStatus Code: %x\n\nExiting!\n\n", status); 
 		return 1; 
 	}
 
-  // If the file does NOT exist:
-  } else {
+// If the file does NOT exist:
+} else {
 	printf("File \"%s\" does not exist.\nExiting...\n", fileNameBak);
 	return 1;
-  }
+}
 
-  cpuStart = clock();
-  timeStart = time(NULL);
-  // Read the first event
-  spillID = 0;
-  status = read_coda_file(physicsEvent,40000);
-  eventIdentifier = physicsEvent[1];
+cpuStart = clock();
+timeStart = time(NULL);
+// Read the first event
+spillID = 0;
+status = read_coda_file(physicsEvent,40000);
+eventIdentifier = physicsEvent[1];
 
-  for(i=0; eventIdentifier != EXIT_CASE; i++){ 
-     // If an error is hit while decoding an offline file, something's wrong
-     while (status != SUCCESS){
-	//printf("End file name: %s\nExitst? %i\n", end_file_name, file_exists(end_file_name));
-	if (file_exists(end_file_name)){
-
-	    // If there are still TDC data values waiting to be sent to the server, send them
-	    if (tdcCount > 0) {
-	    	make_tdc_query(conn);
-	    }
-	    if (latchCount > 0) {
-		make_latch_query(conn);
-	    }
-	    if (scalerCount > 0) {
-		make_scaler_query(conn);
-	    }
-	    if (v1495Count > 0) {
-		make_v1495_query(conn);
-	    }
-   
-
-	    printf("End File Found: %s\nExiting...\n\n", end_file_name);
-
-	    //mysql_stmt_close(runStmt);
-	    //mysql_stmt_close(spillStmt);	
-	    //mysql_stmt_close(codaEvStmt);
-	    mysql_close(conn);
-	    close_coda_file();
-
-	    cpuEnd = clock();
-	    timeEnd = time(NULL);
-
-	    cpuTotal = (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
-	    //printf("Case 1: %i, Case 2: %i, Case 3: %i, Case 4: %i, "
-	    //	"Case 5: %i, Case 6: %i, Case 7: %i, Case 8: %i\n",
-	    //	case1,case2,case3,case4,case5,case6,case7,case8);
-	    printf("CPU Time: %fs\n", cpuTotal);
-	    printf("Real Time: %f\n", (timeEnd - timeStart));
-	    printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n\n", i, physEvCount);
-	    printf("Average Rate: %f Events/s\n\n", ((double)i)/((double)( timeEnd - timeStart )));
-
-	    return 0;
+for(i=0; eventIdentifier != EXIT_CASE; i++){ 
+	// If an error is hit while decoding an offline file, something's wrong
+	while (status != SUCCESS){
+	
+		if (file_exists(end_file_name)){
+	
+		// If there are still TDC data values waiting to be sent to the server, send them
+		if (tdcCount > 0) {
+			make_tdc_query(conn);
+		}
+		if (latchCount > 0) {
+			make_latch_query(conn);
+		}
+		if (scalerCount > 0) {
+			make_scaler_query(conn);
+		}
+		if (v1495Count > 0) {
+			make_v1495_query(conn);
+		}
+	
+		
+		cpuEnd = clock();
+		timeEnd = time(NULL);
+	
+		cpuTotal += (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
+		timeTotal += (double)( timeEnd - timeStart );
+	
+		printf("End File Found: %s\nExiting...\n\n", end_file_name);
+	
+		beginTimeIndexing = time(NULL);
+	/*
+		if( mysql_query(conn, "ALTER TABLE Hit ENABLE KEYS") )
+		{
+				printf("Hit Table Enable Keys Error: %s\n", mysql_error(conn));
+				return 1;
+		}
+			
+		if( mysql_query(conn, "ALTER TABLE TriggerHit ENABLE KEYS") )
+		{
+				printf("TriggerHit Table Enable Keys Error: %s\n", mysql_error(conn));
+				return 1;
+		}
+	*/
+		if( mysql_query(conn, "ALTER TABLE Hit "
+			"ADD INDEX runIndex USING BTREE (runID), "
+			"ADD INDEX spillIndex USING BTREE (spillID), "
+			"ADD INDEX rbcIndex USING BTREE (rocID, boardID, channelID), "
+			"ADD INDEX delIndex USING BTREE (detectorName, elementID)" ) )
+		{
+			printf("Hit Table Enable Keys Error: %s\n", mysql_error(conn));
+			return 1;
+		}
+			
+		if( mysql_query(conn, "ALTER TABLE TriggerHit "
+			"ADD INDEX runIndex USING BTREE (runID), "
+			"ADD INDEX spillIndex USING BTREE (spillID), "
+			"ADD INDEX rbcIndex USING BTREE (rocID, boardID, channelID), "
+			"ADD INDEX delIndex USING BTREE (detectorName, elementID)" ) )
+		{
+			printf("TriggerHit Table Enable Keys Error: %s\n", mysql_error(conn));
+			return 1;
+		}
+	
+		endTimeIndexing = time(NULL);
+		totalTimeIndexing = (double)( endTimeIndexing - beginTimeIndexing );
+	
+		mysql_close(conn);
+		close_coda_file();
+	
+		printf("CPU Time: %fs\n\n", cpuTotal);
+			
+		printf("CPU Time in Creating MySQL Tables: %fs (%f%%)\n", totalSQLcreate, (totalSQLcreate/cpuTotal)*100);
+		printf("Real Time in Creating MySQL Indexes: %fs (%f%%)\n\n", totalTimeIndexing, (totalTimeIndexing/timeTotal)*100);
+			
+		printf("CPU Time in JyTDC: %fs (%f%%)\n", totalJyTDC, (totalJyTDC/cpuTotal)*100);
+		printf("CPU Time in ReimerTDC: %fs (%f%%)\n", totalReimerTDC, (totalReimerTDC/cpuTotal)*100);
+		printf("CPU Time in WC TDC: %fs (%f%%)\n", totalWC, (totalWC/cpuTotal)*100);
+		printf("CPU Time in ZS WC TDC: %fs (%f%%)\n", totalZSWC, (totalZSWC/cpuTotal)*100);
+		printf("CPU Time in Non ZS TDC: %fs (%f%%)\n", totalTDC, (totalTDC/cpuTotal)*100);
+		printf("CPU Time in v1495: %fs (%f%%)\n\n", totalv1495, (totalv1495/cpuTotal)*100);
+		
+		printf("CPU Time in TDC temp file writing: %fs (%f%%)\n", totalTDCfile, (totalTDCfile/cpuTotal)*100);
+		printf("CPU Time in TDC Data Loading: %fs (%f%%)\n", totalTDCload, (totalTDCload/cpuTotal)*100);
+		printf("CPU Time in TDC Mapping: %fs (%f%%)\n", totalTDCmap, (totalTDCmap/cpuTotal)*100);
+		printf("CPU Time in TDC Inserting into Hit: %fs (%f%%)\n", totalTDCinsert, (totalTDCinsert/cpuTotal)*100);
+		printf("CPU Time in Whole TDC Process: %fs (%f%%)\n", totalTDCwhole, (totalTDCwhole/cpuTotal)*100);
+		printf("Real Time in TDC Data Loading: %fs (%f%%)\n", totalTimeTDCload, (totalTimeTDCload/timeTotal)*100);
+		printf("Real Time in TDC Mapping: %fs (%f%%)\n", totalTimeTDCmap, (totalTimeTDCmap/timeTotal)*100);
+		printf("Real Time in TDC Inserting into Hit: %fs (%f%%)\n\n", totalTimeTDCinsert, (totalTimeTDCinsert/timeTotal)*100);
+			
+		printf("CPU Time in v1495 temp file writing: %fs (%f%%)\n", totalv1495file, (totalv1495file/cpuTotal)*100);
+		printf("CPU Time in v1495 Data Loading: %fs (%f%%)\n", totalv1495load, (totalv1495load/cpuTotal)*100);
+		printf("CPU Time in v1495 Mapping: %fs (%f%%)\n", totalv1495map, (totalv1495map/cpuTotal)*100);
+		printf("CPU Time in v1495 Inserting into Hit: %fs (%f%%)\n", totalv1495insert, (totalv1495insert/cpuTotal)*100);
+		printf("Real Time in v1495 Data Loading: %fs (%f%%)\n", totalTimev1495load, (totalTimev1495load/timeTotal)*100);
+		printf("Real Time in v1495 Mapping: %fs (%f%%)\n", totalTimev1495map, (totalTimev1495map/timeTotal)*100);
+		printf("Real Time in v1495 Inserting into Hit: %fs (%f%%)\n\n", totalTimev1495insert, (totalTimev1495insert/timeTotal)*100);
+		
+		printf("CPU Time writing SlowControl temp files: %fs (%f%%)\n", totalSlowfile, (totalSlowfile/cpuTotal)*100);
+		printf("CPU Time submitting SlowControl Data: %fs (%f%%)\n", totalSlowload, (totalSlowload/cpuTotal)*100);
+		printf("Real Time submitting SlowControl Data: %fs (%f%%)\n\n", totalTimeSlowload, (totalTimeSlowload/timeTotal)*100);
+		
+		printf("CPU Time submitting CODA Events: %fs (%f%%)\n", totalCodaBind, (totalCodaBind/cpuTotal)*100);
+		printf("CPU Time submitting Spill Events: %fs (%f%%)\n\n", totalSpillBind, (totalSpillBind/cpuTotal)*100);
+		
+		printf("SlowControl Count: %i\n", slowControlCount);
+		printf("Real Time: %f\n", timeTotal);
+		printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n", i, physEvCount);
+		printf("Average Rate: %f Events/s\n\n", ((double)i)/(timeTotal));	
+	
+		return 0;
 
 	} else {
-	    // If an error is hit while decoding an online file, it likely just means
-     	    // 	you need to wait for more events to be written.  Wait and try again.
-	    if ( online == 0 ) { printf("ERROR: CODA Read Error in Offline Mode. No END file. Exiting...\n"); return 1; }
-	    status = retry(fileNameBak, i, physicsEvent);
+		// If an error is hit while decoding an online file, it likely just means
+		// 	you need to wait for more events to be written.  Wait and try again.
+		if ( online == 0 ) { printf("ERROR: CODA Read Error in Offline Mode. No END file. Exiting...\n"); return 1; }
+		// Get file size the first time through this while loop
+		if ( stopped == 0 ) {
+			fp = fopen(fileNameBak, "r");
+			fseek(fp, 0L, SEEK_END);
+			fileSize = ftell(fp);
+			fclose(fp);
+			stopped = 1;
+		}
+		// Submit whatever data you've got before you wait
+		if (tdcCount > 0) {
+			make_tdc_query(conn);
+			tdcCount = 0;
+		}
+		if (latchCount > 0) {
+			make_latch_query(conn);
+			latchCount = 0;
+		}
+		if (scalerCount > 0) {
+			make_scaler_query(conn);
+			scalerCount = 0;
+		}
+		if (v1495Count > 0) {
+			make_v1495_query(conn);
+			v1495Count = 0;
+		}
+		// Wait, then see if the file has grown by at least one block size
+		status = retry(fileNameBak, fileSize, i, physicsEvent);
+		if ( status == SUCCESS ) {
+			cpuStart = clock();
+			timeStart = time(NULL);
+			stopped = 0;
+		}
 	}
-    }
+}
 
-     // The last 4 hex digits will be 0x01cc for Prestart, Go Event, 
-     //		and End Event, and 0x10cc for Physics Events
-     switch (eventIdentifier & 0xFFFF) {
+// The last 4 hex digits will be 0x01cc for Prestart, Go Event, 
+//		and End Event, and 0x10cc for Physics Events
+switch (eventIdentifier & 0xFFFF) {
 
 	case PHYSICS_EVENT:
-	       	if((codaEventNum % 10000 == 0) && (codaEventNum != 0)) printf("%i Events\n", codaEventNum);
+		if((codaEventNum % 10000 == 0) && (codaEventNum != 0)) printf("%i Events\n", codaEventNum);
 
- 		if (get_hex_bits(physicsEvent[1],7,4)==140){
+		if (get_hex_bits(physicsEvent[1],7,4)==140){
 			// Start of run descriptor
 			if ( eventRunDescriptorSQL(conn, physicsEvent) ) {
 				printf("Beginning of Run Descriptor Event Processing Error\n");
@@ -231,27 +336,27 @@ int main(int argc,char* argv[]){
 
 	case CODA_EVENT:
 		switch (eventIdentifier) {
-		   case PRESTART_EVENT:
+		case PRESTART_EVENT:
 			// printf("Prestart Event\n");
 			if ( prestartSQL(conn, physicsEvent) ) return 1;
 			break;
-		   case GO_EVENT:
+		case GO_EVENT:
 			// printf("Go Event\n");
 			goEventSQL(conn, physicsEvent); 
 			break;
-		   case END_EVENT:
+		case END_EVENT:
 			if ( endEventSQL(conn, physicsEvent) ) return 1;
 			eventIdentifier=EXIT_CASE;
 			printf("End Event Processed\n");
 			break;
-		   default:
+		default:
 			printf("Uncovered Case: %lx\n", eventIdentifier);
 			if (tdcCount > 0) {
-   				make_tdc_query(conn);
-   			}
+				make_tdc_query(conn);
+			}
 			if (latchCount > 0) {
-   				make_latch_query(conn);
-   			}
+				make_latch_query(conn);
+			}
 			return 1;
 			break;
 		}
@@ -259,7 +364,7 @@ int main(int argc,char* argv[]){
 
 	case 0:
 		// Special case which requires waiting and retrying
-		status = retry(fileNameBak, (i-1), physicsEvent);
+		status = retry(fileNameBak, 0, (i-1), physicsEvent);
 		i--;
 		break;
 	default:
@@ -267,77 +372,122 @@ int main(int argc,char* argv[]){
 		printf("Uncovered Case: %lx\n", eventIdentifier);
 		return 1;
 		break;
-     }
+}
 
-     // Clear the buffer, read the next event, and go back through the loop.
-     if (eventIdentifier != EXIT_CASE) {
+// Clear the buffer, read the next event, and go back through the loop.
+if (eventIdentifier != EXIT_CASE) {
 	memset((void*)&physicsEvent, 0, sizeof(unsigned int)*40000);
-        status = read_coda_file(physicsEvent,40000);
-        eventIdentifier = physicsEvent[1];
-     }
-   }
+	status = read_coda_file(physicsEvent,40000);
+	eventIdentifier = physicsEvent[1];
+}
+}
 
-   // If there are still TDC data values waiting to be sent to the server, send them
-   if (tdcCount > 0) {
-   	make_tdc_query(conn);
-   }
-   // If there is still latch data waiting to be sent to the server, send it
-   if (latchCount > 0) {
-   	make_latch_query(conn);
-   }
-   if (scalerCount > 0) {
-   	make_scaler_query(conn);
-   }
-   
-   if (v1495Count > 0) {
+// If there are still TDC data values waiting to be sent to the server, send them
+if (tdcCount > 0) {
+	make_tdc_query(conn);
+}
+// If there is still latch data waiting to be sent to the server, send it
+if (latchCount > 0) {
+	make_latch_query(conn);
+}
+if (scalerCount > 0) {
+	make_scaler_query(conn);
+}
+
+if (v1495Count > 0) {
 	make_v1495_query(conn);
-   }
-   
-   //mysql_stmt_close(runStmt);
-   //mysql_stmt_close(spillStmt);
-   //mysql_stmt_close(codaEvStmt);
-   mysql_close(conn);
-   close_coda_file();
+}
 
-   cpuEnd = clock();
-   timeEnd = time(NULL);
-   cpuTotal = (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
+cpuEnd = clock();
+timeEnd = time(NULL);
+cpuTotal += (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
+timeTotal += (double)( timeEnd - timeStart );
+
+beginTimeIndexing = time(NULL);
+/*
+if( mysql_query(conn, "ALTER TABLE Hit ENABLE KEYS") )
+{
+	printf("Hit Table Enable Keys Error: %s\n", mysql_error(conn));
+	return 1;
+}
+	
+if( mysql_query(conn, "ALTER TABLE TriggerHit ENABLE KEYS") )
+{
+	printf("TriggerHit Table Enable Keys Error: %s\n", mysql_error(conn));
+	return 1;
+}
+*/
+if( mysql_query(conn, "ALTER TABLE Hit "
+	"ADD INDEX runIndex USING BTREE (runID), "
+	"ADD INDEX spillIndex USING BTREE (spillID), "
+	"ADD INDEX rbcIndex USING BTREE (rocID, boardID, channelID), "
+	"ADD INDEX delIndex USING BTREE (detectorName, elementID)" ) )
+{
+	printf("Hit Table Enable Keys Error: %s\n", mysql_error(conn));
+	return 1;
+}
+			
+if( mysql_query(conn, "ALTER TABLE TriggerHit "
+	"ADD INDEX runIndex USING BTREE (runID), "
+	"ADD INDEX spillIndex USING BTREE (spillID), "
+	"ADD INDEX rbcIndex USING BTREE (rocID, boardID, channelID), "
+	"ADD INDEX delIndex USING BTREE (detectorName, elementID)" ) )
+{
+	printf("TriggerHit Table Enable Keys Error: %s\n", mysql_error(conn));
+	return 1;
+}
+
+endTimeIndexing = time(NULL);
+totalTimeIndexing = (double)( endTimeIndexing - beginTimeIndexing );
+
+mysql_close(conn);
+close_coda_file();
 
 
-   printf("CPU Time: %fs\n\n", cpuTotal);
 
-   printf("CPU Time in Creating MySQL Tables: %fs (%f%%)\n\n", totalSQLcreate, (totalSQLcreate/cpuTotal)*100);
 
-   printf("CPU Time in JyTDC: %fs (%f%%)\n", totalJyTDC, (totalJyTDC/cpuTotal)*100);
-   printf("CPU Time in ReimerTDC: %fs (%f%%)\n", totalReimerTDC, (totalReimerTDC/cpuTotal)*100);
-   printf("CPU Time in WC TDC: %fs (%f%%)\n", totalWC, (totalWC/cpuTotal)*100);
-   printf("CPU Time in ZS WC TDC: %fs (%f%%)\n", totalZSWC, (totalZSWC/cpuTotal)*100);
-   printf("CPU Time in Non ZS TDC: %fs (%f%%)\n", totalTDC, (totalTDC/cpuTotal)*100);
-   printf("CPU Time in v1495: %fs (%f%%)\n\n", totalv1495, (totalv1495/cpuTotal)*100);
+printf("CPU Time: %fs\n\n", cpuTotal);
 
-   printf("CPU Time in TDC temp file writing: %fs (%f%%)\n", totalTDCfile, (totalTDCfile/cpuTotal)*100);
-   printf("CPU Time in TDC Data Loading: %fs (%f%%)\n", totalTDCload, (totalTDCload/cpuTotal)*100);
-   printf("CPU Time in TDC Mapping: %fs (%f%%)\n", totalTDCmap, (totalTDCmap/cpuTotal)*100);
-   printf("CPU Time in TDC Inserting into Hit: %fs (%f%%)\n", totalTDCinsert, (totalTDCinsert/cpuTotal)*100);
-   printf("CPU Time in Whole TDC Process: %fs (%f%%)\n\n", totalTDCwhole, (totalTDCwhole/cpuTotal)*100);
+printf("CPU Time in Creating MySQL Tables: %fs (%f%%)\n", totalSQLcreate, (totalSQLcreate/cpuTotal)*100);
+printf("Real Time in Creating MySQL Indexes: %fs (%f%%)\n\n", totalTimeIndexing, (totalTimeIndexing/timeTotal)*100);
 
-   printf("CPU Time in v1495 temp file writing: %fs (%f%%)\n", totalv1495file, (totalv1495file/cpuTotal)*100);
-   printf("CPU Time in v1495 Data Loading: %fs (%f%%)\n", totalv1495load, (totalv1495load/cpuTotal)*100);
-   printf("CPU Time in v1495 Mapping: %fs (%f%%)\n", totalv1495map, (totalv1495map/cpuTotal)*100);
-   printf("CPU Time in v1495 Inserting into Hit: %fs (%f%%)\n\n", totalv1495insert, (totalv1495insert/cpuTotal)*100);
+printf("CPU Time in JyTDC: %fs (%f%%)\n", totalJyTDC, (totalJyTDC/cpuTotal)*100);
+printf("CPU Time in ReimerTDC: %fs (%f%%)\n", totalReimerTDC, (totalReimerTDC/cpuTotal)*100);
+printf("CPU Time in WC TDC: %fs (%f%%)\n", totalWC, (totalWC/cpuTotal)*100);
+printf("CPU Time in ZS WC TDC: %fs (%f%%)\n", totalZSWC, (totalZSWC/cpuTotal)*100);
+printf("CPU Time in Non ZS TDC: %fs (%f%%)\n", totalTDC, (totalTDC/cpuTotal)*100);
+printf("CPU Time in v1495: %fs (%f%%)\n\n", totalv1495, (totalv1495/cpuTotal)*100);
 
-   printf("CPU Time writing SlowControl temp files: %fs (%f%%)\n", totalSlowfile, (totalSlowfile/cpuTotal)*100);
-   printf("CPU Time submitting SlowControl Data: %fs (%f%%)\n\n", totalSlowload, (totalSlowload/cpuTotal)*100);
+printf("CPU Time in TDC temp file writing: %fs (%f%%)\n", totalTDCfile, (totalTDCfile/cpuTotal)*100);
+printf("CPU Time in TDC Data Loading: %fs (%f%%)\n", totalTDCload, (totalTDCload/cpuTotal)*100);
+printf("CPU Time in TDC Mapping: %fs (%f%%)\n", totalTDCmap, (totalTDCmap/cpuTotal)*100);
+printf("CPU Time in TDC Inserting into Hit: %fs (%f%%)\n", totalTDCinsert, (totalTDCinsert/cpuTotal)*100);
+printf("CPU Time in Whole TDC Process: %fs (%f%%)\n", totalTDCwhole, (totalTDCwhole/cpuTotal)*100);
+printf("Real Time in TDC Data Loading: %fs (%f%%)\n", totalTimeTDCload, (totalTimeTDCload/timeTotal)*100);
+printf("Real Time in TDC Mapping: %fs (%f%%)\n", totalTimeTDCmap, (totalTimeTDCmap/timeTotal)*100);
+printf("Real Time in TDC Inserting into Hit: %fs (%f%%)\n\n", totalTimeTDCinsert, (totalTimeTDCinsert/timeTotal)*100);
+	
+printf("CPU Time in v1495 temp file writing: %fs (%f%%)\n", totalv1495file, (totalv1495file/cpuTotal)*100);
+printf("CPU Time in v1495 Data Loading: %fs (%f%%)\n", totalv1495load, (totalv1495load/cpuTotal)*100);
+printf("CPU Time in v1495 Mapping: %fs (%f%%)\n", totalv1495map, (totalv1495map/cpuTotal)*100);
+printf("CPU Time in v1495 Inserting into Hit: %fs (%f%%)\n", totalv1495insert, (totalv1495insert/cpuTotal)*100);
+printf("Real Time in v1495 Data Loading: %fs (%f%%)\n", totalTimev1495load, (totalTimev1495load/timeTotal)*100);
+printf("Real Time in v1495 Mapping: %fs (%f%%)\n", totalTimev1495map, (totalTimev1495map/timeTotal)*100);
+printf("Real Time in v1495 Inserting into Hit: %fs (%f%%)\n\n", totalTimev1495insert, (totalTimev1495insert/timeTotal)*100);
 
-   printf("CPU Time submitting CODA Events: %fs (%f%%)\n", totalCodaBind, (totalCodaBind/cpuTotal)*100);
-   printf("CPU Time submitting Spill Events: %fs (%f%%)\n\n", totalSpillBind, (totalSpillBind/cpuTotal)*100);
+printf("CPU Time writing SlowControl temp files: %fs (%f%%)\n", totalSlowfile, (totalSlowfile/cpuTotal)*100);
+printf("CPU Time submitting SlowControl Data: %fs (%f%%)\n", totalSlowload, (totalSlowload/cpuTotal)*100);
+printf("Real Time submitting SlowControl Data: %fs (%f%%)\n\n", totalTimeSlowload, (totalTimeSlowload/timeTotal)*100);
 
-   printf("SlowControl Count: %i\n", slowControlCount);
-   printf("Real Time: %f\n", (double)(timeEnd - timeStart));
-   printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n\n", i, physEvCount);
-   printf("Average Rate: %f Events/s\n\n", ((double)i)/((double)( timeEnd - timeStart )));
+printf("CPU Time submitting CODA Events: %fs (%f%%)\n", totalCodaBind, (totalCodaBind/cpuTotal)*100);
+printf("CPU Time submitting Spill Events: %fs (%f%%)\n\n", totalSpillBind, (totalSpillBind/cpuTotal)*100);
 
-   return 0;
+printf("SlowControl Count: %i\n", slowControlCount);
+printf("Real Time: %f\n", timeTotal);
+printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n", i, physEvCount);
+printf("Average Rate: %f Events/s\n\n", ((double)i)/(timeTotal));
+
+return 0;
 };
 
 // ==============================================================
@@ -432,7 +582,7 @@ int initialize(int argc,char* argv[]){
   return 0;
 }
 
-int retry(char *file, int codaEventCount, unsigned int physicsEvent[40000]){
+int retry(char *file, long unsigned int oldfilesize, int codaEventCount, unsigned int physicsEvent[40000]){
 // ================================================================
 //
 // This function is used in the case that a file is being decoded
@@ -452,23 +602,18 @@ int retry(char *file, int codaEventCount, unsigned int physicsEvent[40000]){
 
   // File handling variables
   FILE *fp;
-  long int fileSize;
-  long int fileSize2;
-
-  // Get file size
-  fp = fopen(file, "r");
-  fseek(fp, 0L, SEEK_END);
-  fileSize = ftell(fp);
+  long int newfilesize;
 
   // Wait N seconds
   sleep(WAIT_TIME);
 
   // Get more recent file size
+  fp = fopen(file, "r");
   fseek(fp, 0L, SEEK_END);
-  fileSize2 = ftell(fp);
+  newfilesize = ftell(fp);
 
   // If the file grows by at least a single block size, get the next new event
-  if ( fileSize2 > (fileSize + 32768) ) {
+  if ( newfilesize > (oldfilesize + 32768) ) {
 
 	// Open up the CODA file again
 	status = open_coda_file(file);
@@ -570,15 +715,15 @@ int createSQL(MYSQL *conn, char *schema){
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
 		"`detectorName` CHAR(6), "
-		"`elementID` SMALLINT UNSIGNED, "
+		"`elementID` TINYINT UNSIGNED, "
 		"`tdcTime` FLOAT, "
 		"`driftDistance` FLOAT, "
 		"`vmeTime` MEDIUMINT UNSIGNED, "
-		"INDEX USING BTREE (runID), "
-		"INDEX USING BTREE (spillID), "
-		"INDEX USING BTREE (eventID), "
-		"INDEX USING BTREE (rocID, boardID, channelID), "
-		"INDEX USING BTREE (detectorName, elementID) )") )
+//		"INDEX USING BTREE (runID), "
+//		"INDEX USING BTREE (spillID), "
+		"INDEX USING BTREE (eventID) ) " ) )
+//		"INDEX USING BTREE (rocID, boardID, channelID), "
+//		"INDEX USING BTREE (detectorName, elementID) )") )
 	{
 		printf("Hit Table Creation Error: %s\n", mysql_error(conn));
 		return 1;
@@ -595,14 +740,14 @@ int createSQL(MYSQL *conn, char *schema){
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
 		"`detectorName` CHAR(6), "
-		"`elementID` SMALLINT UNSIGNED, "
+		"`elementID` TINYINT UNSIGNED, "
 		"`tdcTime` FLOAT, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
-		"INDEX USING BTREE (runID), "
-		"INDEX USING BTREE (spillID), "
-		"INDEX USING BTREE (eventID), "
-		"INDEX USING BTREE (rocID, boardID, channelID), "
-		"INDEX USING BTREE (detectorName, elementID) )") )
+//		"INDEX USING BTREE (runID), "
+//		"INDEX USING BTREE (spillID), "
+		"INDEX USING BTREE (eventID) )" ) )
+//		"INDEX USING BTREE (rocID, boardID, channelID), "
+//		"INDEX USING BTREE (detectorName, elementID) )") )
 	{
 		printf("TriggerHit Table Creation Error: %s\n", mysql_error(conn));
 		return 1;
@@ -618,11 +763,12 @@ int createSQL(MYSQL *conn, char *schema){
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
 		"`detectorName` CHAR(6), "
-		"`elementID` SMALLINT UNSIGNED, "
+		"`elementID` TINYINT UNSIGNED, "
 		"`tdcTime` FLOAT, "
 		"`driftDistance` FLOAT, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
-		"INDEX USING BTREE (rocID, boardID, channelID) )") )
+		"INDEX USING BTREE (rocID, boardID, channelID) )"
+		"ENGINE=MEMORY") )
 	{
 		printf("Create tempHit error: %s\n", mysql_error(conn));
 		return 1;
@@ -638,7 +784,7 @@ int createSQL(MYSQL *conn, char *schema){
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
 		"`detectorName` CHAR(6), "
-		"`elementID` SMALLINT UNSIGNED, "
+		"`elementID` TINYINT UNSIGNED, "
 		"`value` INT NOT NULL, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
 		"INDEX USING BTREE (runID), "
@@ -661,7 +807,7 @@ int createSQL(MYSQL *conn, char *schema){
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
 		"`detectorName` CHAR(6), "
-		"`elementID` SMALLINT UNSIGNED, "
+		"`elementID` TINYINT UNSIGNED, "
 		"`value` INT NOT NULL, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
 		"INDEX USING BTREE (rocID, boardID, channelID))") )
@@ -694,7 +840,19 @@ int createSQL(MYSQL *conn, char *schema){
 		printf("Create HV Table Error: %s\n", mysql_error(conn));
 		return 1;
 	}
+/*
+	if( mysql_query(conn, "ALTER TABLE Hit DISABLE KEYS") )
+	{
+		printf("Hit Table Disable Keys Error: %s\n", mysql_error(conn));
+		return 1;
+	}
 
+	if( mysql_query(conn, "ALTER TABLE TriggerHit DISABLE KEYS") )
+	{
+		printf("TriggerHit Table Disable Keys Error: %s\n", mysql_error(conn));
+		return 1;
+	}
+*/
 	// These are the strings that the prepared statements will use
 	sprintf(runInsert, "INSERT INTO Run (runID, runTime) VALUES (?,?)");
 	sprintf(spillInsert,"INSERT INTO Spill (spillID, runID, eventID, "
@@ -827,6 +985,12 @@ int prestartSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 	runNum = physicsEvent[3];
 	runType = physicsEvent[4];
 
+	cpuEnd = clock();
+	timeEnd = time(NULL);
+	cpuTotal += (double)( cpuEnd - cpuStart ) / (double)CLOCKS_PER_SEC;
+	timeTotal += (double)( timeEnd - timeStart );
+
+
 	// Check if this run already exists in the data
 	if (runExists(conn, runNum)){
 		if(force){
@@ -927,6 +1091,9 @@ int prestartSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 		printf("Run Insert Error: %s\n",mysql_error(conn));
 		return 1;
 	}
+
+	cpuStart = clock();
+	timeStart = time(NULL);
 
 	return 0;
 
@@ -1037,7 +1204,7 @@ int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 //	big string of hex values, parses it into 2-digit/1-char chunks, 
 //	flips every group of four characters, and writes them to file.
 //	After being written to file, they are loaded up to the MySQL server
-//	via the LOAD DATA LOCAL INFILE funcion.
+//	via the LOAD DATA CONCURRENT LOCAL INFILE funcion.
 //
 // Returns:	0 if successful
 //		1 on error
@@ -1064,7 +1231,6 @@ int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 	if (fp == NULL) {
   		fprintf(stderr, "Can't open output file %s!\n",
           		outputFileName);
-		// sprintf(text, "");
   		exit(1);
 	}
 
@@ -1083,12 +1249,13 @@ int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 	
 
 	beginSlowload = clock();
+	beginTimeSlowload = time(NULL);
 
 	// Assemble the MySQL query to load the file into the server.
 	// 	The LOCAL means the file is on the local machine
 	//	The IGNORE 2 LINES skips the date and list of field names and goes
 	//		right to the values.
-	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE SlowControl "
+	sprintf(qryString,"LOAD DATA CONCURRENT LOCAL INFILE '%s' INTO TABLE SlowControl "
 			"FIELDS TERMINATED BY ' '", outputFileName);
 
 	// Submit the query to the server	
@@ -1106,8 +1273,9 @@ int eventSlowSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 	}
 
 	endSlowload = clock();
-
+	endTimeSlowload = time(NULL);
 	totalSlowload += ((double)( endSlowload - beginSlowload ) / (double)CLOCKS_PER_SEC);
+	totalTimeSlowload += (double)( endTimeSlowload - beginTimeSlowload );
 	
 	if (file_exists(outputFileName)) { remove(outputFileName); }
 
@@ -2434,15 +2602,14 @@ int make_tdc_query(MYSQL* conn){
 	}
 
 	for(k=0;k<tdcCount;k++){
-		fprintf(fp, "%i %i %i %i %i %i \\N \\N %f \\N %i\n", tdcRunID[k], tdcSpillID[k], tdcCodaID[k], tdcROC[k], 
-			tdcBoardID[k], tdcChannelID[k], tdcStopTime[k], tdcVmeTime[k]);
+		fprintf(fp, "\\N\t%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\n", tdcRunID[k], tdcSpillID[k], 
+			tdcCodaID[k], tdcROC[k], tdcBoardID[k], tdcChannelID[k], tdcStopTime[k], tdcVmeTime[k]);
 	}
 
 	// File MUST be closed before it can be loaded into MySQL
 	fclose(fp);
 
 	endTDCfile = clock();
-
         totalTDCfile += ((double)( endTDCfile - beginTDCfile ) / (double)CLOCKS_PER_SEC);
 
 
@@ -2450,10 +2617,10 @@ int make_tdc_query(MYSQL* conn){
 
 
 
-	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE tempHit "
-			"FIELDS TERMINATED BY ' ' LINES TERMINATED BY '\\n'", outputFileName);
+	sprintf(qryString,"LOAD DATA CONCURRENT LOCAL INFILE '%s' INTO TABLE tempHit", outputFileName);
 	
 	beginTDCload = clock();
+	beginTimeTDCload = time(NULL);
 
 	// Submit the query to the server	
 	if(mysql_query(conn, qryString))
@@ -2464,8 +2631,9 @@ int make_tdc_query(MYSQL* conn){
 	}
 
 	endTDCload = clock();
-
+	endTimeTDCload = time(NULL);
         totalTDCload += ((double)( endTDCload - beginTDCload ) / (double)CLOCKS_PER_SEC);
+	totalTimeTDCload += (double)( endTimeTDCload - beginTimeTDCload );
 
 	if( mysql_warning_count(conn) > 0 )
 	{
@@ -2486,6 +2654,7 @@ int make_tdc_query(MYSQL* conn){
 	memset((void*)&tdcVmeTime, 0, sizeof(unsigned short)*max_tdc_rows);
 
 	beginTDCmap = clock();
+	beginTimeTDCmap = time(NULL);
 
 	if (mysql_query(conn, "UPDATE tempHit t, Mapping m\n"
                 "SET t.detectorName = m.detectorName, "
@@ -2506,16 +2675,18 @@ int make_tdc_query(MYSQL* conn){
         }
 
 	endTDCmap = clock();
-
         totalTDCmap += ((double)( endTDCmap - beginTDCmap ) / (double)CLOCKS_PER_SEC);
+	endTimeTDCmap = time(NULL);
+        totalTimeTDCmap += (double)( endTimeTDCmap - beginTimeTDCmap );
 	
 
 
 
 
 	beginTDCinsert = clock();
+	beginTimeTDCinsert = time(NULL);
 
-	if (mysql_query(conn, "INSERT DELAYED INTO Hit (eventID, runID, spillID, "
+	if (mysql_query(conn, "INSERT INTO Hit (eventID, runID, spillID, "
 		"rocID, boardID, channelID, detectorName, elementID, tdcTime, driftDistance, vmeTime) "
 		"SELECT eventID, runID, spillID, rocID, boardID, channelID, "
 		"detectorName, elementID, tdcTime, driftDistance, vmeTime FROM tempHit") )
@@ -2526,7 +2697,8 @@ int make_tdc_query(MYSQL* conn){
 
 	endTDCinsert = clock();
         totalTDCinsert += ((double)( endTDCinsert - beginTDCinsert ) / (double)CLOCKS_PER_SEC);
-
+	endTimeTDCinsert = time(NULL);
+        totalTimeTDCinsert += (double)( endTimeTDCinsert - beginTimeTDCinsert );
 
 
 	if (mysql_query(conn, "DELETE FROM tempHit") )
@@ -2572,8 +2744,8 @@ int make_v1495_query(MYSQL* conn){
 	}
 
 	for(k=0;k<v1495Count;k++){
-		fprintf(fp, "%i %i %i %i %i %i \\N \\N %f \\N %i\n", v1495RunID[k], v1495SpillID[k], v1495CodaID[k], v1495ROC[k], 
-			v1495BoardID[k], v1495ChannelID[k], v1495StopTime[k], v1495VmeTime[k]);
+		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\n", v1495RunID[k], v1495SpillID[k], 
+			v1495CodaID[k], v1495ROC[k], v1495BoardID[k], v1495ChannelID[k], v1495StopTime[k], v1495VmeTime[k]);
 	}
 
 	// File MUST be closed before it can be loaded into MySQL
@@ -2586,9 +2758,9 @@ int make_v1495_query(MYSQL* conn){
 
 
 	beginv1495load = clock();
+	beginTimev1495load = time(NULL);
 
-	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE tempHit "
-			"FIELDS TERMINATED BY ' ' LINES TERMINATED BY '\\n'", outputFileName);
+	sprintf(qryString,"LOAD DATA CONCURRENT LOCAL INFILE '%s' INTO TABLE tempHit", outputFileName);
 	
 	// Submit the query to the server	
 	if(mysql_query(conn, qryString))
@@ -2599,8 +2771,10 @@ int make_v1495_query(MYSQL* conn){
 	}
 
 	endv1495load = clock();
-
         totalv1495load += ((double)( endv1495load - beginv1495load ) / (double)CLOCKS_PER_SEC);
+	endTimev1495load = time(NULL);
+        totalTimev1495load += (double)( endTimev1495load - beginTimev1495load );
+
 
 	if( mysql_warning_count(conn) > 0 )
 	{
@@ -2621,6 +2795,7 @@ int make_v1495_query(MYSQL* conn){
 	memset((void*)&v1495VmeTime, 0, sizeof(int)*max_v1495_rows);
 
 	beginv1495map = clock();
+	beginTimev1495map = time(NULL);
 
 	if (mysql_query(conn, "UPDATE tempHit t, Mapping m\n"
                 "SET t.detectorName = m.detectorName, "
@@ -2634,13 +2809,13 @@ int make_v1495_query(MYSQL* conn){
 
 	endv1495map = clock();
         totalv1495map += ((double)( endv1495map - beginv1495map ) / (double)CLOCKS_PER_SEC);
-	
-
-
+	endTimev1495map = time(NULL);
+        totalTimev1495map += (double)( endTimev1495map - beginTimev1495map );
 
 	beginv1495insert = clock();
+	beginTimev1495insert = time(NULL);
 
-	if (mysql_query(conn, "INSERT DELAYED INTO TriggerHit (eventID, runID, spillID, "
+	if (mysql_query(conn, "INSERT INTO TriggerHit (eventID, runID, spillID, "
 		"rocID, boardID, channelID, detectorName, elementID, tdcTime, vmeTime) "
 		"SELECT eventID, runID, spillID, rocID, boardID, channelID, "
 		"detectorName, elementID, tdcTime, vmeTime FROM tempHit") )
@@ -2651,7 +2826,8 @@ int make_v1495_query(MYSQL* conn){
 
 	endv1495insert = clock();
         totalv1495insert += ((double)( endv1495insert - beginv1495insert ) / (double)CLOCKS_PER_SEC);
-	
+	endTimev1495insert = time(NULL);
+        totalTimev1495insert += (double)( endTimev1495insert - beginTimev1495insert );
 
 	if (mysql_query(conn, "DELETE FROM tempHit") )
 	{
@@ -2690,15 +2866,14 @@ int make_latch_query(MYSQL *conn){
 	}
 
 	for(k=0;k<latchCount;k++){
-		fprintf(fp, "%i %i %i %i %i %i \\N \\N \\N \\N %i\n", latchRunID[k], latchSpillID[k], latchCodaID[k],
+		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t\\N\t\\N\t%i\n", latchRunID[k], latchSpillID[k], latchCodaID[k],
 			latchROC[k], latchBoardID[k], latchChannelID[k], latchVmeTime[k]);
 	}
 
 	// File MUST be closed before it can be loaded into MySQL
 	fclose(fp);
 
-	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE tempHit "
-			"FIELDS TERMINATED BY ' ' LINES TERMINATED BY '\\n'", outputFileName);
+	sprintf(qryString,"LOAD DATA CONCURRENT LOCAL INFILE '%s' INTO TABLE tempHit", outputFileName);
 	
 	// Submit the query to the server	
 	if(mysql_query(conn, qryString))
@@ -2734,7 +2909,7 @@ int make_latch_query(MYSQL *conn){
                 return 1;
         }
 
-	if (mysql_query(conn, "INSERT DELAYED INTO Hit (runID, eventID, spillID, vmeTime, "
+	if (mysql_query(conn, "INSERT INTO Hit (runID, eventID, spillID, vmeTime, "
 		"rocID, boardID, channelID, detectorName, elementID) "
 		"SELECT runID, eventID, spillID, vmeTime, rocID, boardID, channelID, "
 		"detectorName, elementID FROM tempHit") )
@@ -2780,7 +2955,7 @@ int make_scaler_query(MYSQL* conn){
 	}
 
 	for(k=0;k<scalerCount;k++){
-		fprintf(fp, "%i %i %i %i %i %i \\N \\N %i %i\n", scalerRunID[k], scalerSpillID[k], 
+		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%i\t%i\n", scalerRunID[k], scalerSpillID[k], 
 			scalerCodaID[k], scalerROC[k], scalerBoardID[k], scalerChannelID[k], 
 			scalerValue[k], scalerVmeTime[k]);
 	}
@@ -2788,8 +2963,7 @@ int make_scaler_query(MYSQL* conn){
 	// File MUST be closed before it can be loaded into MySQL
 	fclose(fp);
 
-	sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE tempScaler "
-			"FIELDS TERMINATED BY ' ' LINES TERMINATED BY '\\n'", outputFileName);
+	sprintf(qryString,"LOAD DATA CONCURRENT LOCAL INFILE '%s' INTO TABLE tempScaler", outputFileName);
 	
 	// Submit the query to the server	
 	if(mysql_query(conn, qryString))
