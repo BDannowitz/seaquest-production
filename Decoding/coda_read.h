@@ -30,6 +30,7 @@ unsigned int codaEventNum;
 int eventType, evLength, evNum; 
 unsigned short int triggerBits, dataQuality;
 
+
 // Counters
 int slowControlCount;
 
@@ -43,6 +44,7 @@ unsigned int tdcCodaID[5000];
 unsigned char tdcROC[5000], tdcChannelID[5000];
 unsigned short int tdcBoardID[5000], tdcRunID[5000], tdcSpillID[5000], tdcVmeTime[5000];
 float tdcStopTime[5000];
+unsigned char tdcInTime[5000];
 unsigned short int tdcCount;
 char errString[1028];
 
@@ -51,6 +53,7 @@ int const max_v1495_rows = 5000;
 int v1495RocID[5000], v1495CodaID[5000], v1495RunID[5000], v1495SpillID[5000];
 int v1495ROC[5000], v1495ChannelID[5000];
 unsigned short int v1495BoardID[5000];
+unsigned char v1495InTime[5000];
 float v1495StopTime[5000];
 int v1495VmeTime[5000];
 int v1495Count;
@@ -59,6 +62,7 @@ int v1495Count;
 int const max_latch_rows = 5000;
 int latchRocID[5000], latchCodaID[5000], latchRunID[5000], latchSpillID[5000], latchROC[5000];
 int latchBoardID[5000], latchChannelID[5000], latchVmeTime[5000];
+unsigned char latchInTime[5000];
 int latchCount;
 
 // Spill Values
@@ -66,9 +70,10 @@ unsigned short int spillID, spillVmeTime;
 unsigned char spillType;
 
 // Scaler Values
-int const max_scaler_rows = 5000;
-int scalerCodaID[5000], scalerRunID[5000], scalerSpillID[5000], scalerROC[5000];
-int scalerBoardID[5000], scalerChannelID[5000], scalerValue[5000], scalerVmeTime[5000];
+int const max_scaler_rows = 500;
+int scalerCodaID[500], scalerSpillID[500], scalerROC[500];
+int scalerRunID[500];
+int scalerBoardID[500], scalerChannelID[500], scalerValue[500], scalerVmeTime[500];
 int scalerCount;
 
 // New TDC Values
@@ -193,6 +198,19 @@ enum { EXIT_CASE = 0x66666666 };
 enum { ON = 1 };
 enum { OFF = 0 };
 enum { WAIT_TIME = 5 };
+enum TRIGTYPE {
+	NIM,
+	FPGA
+};
+
+enum {
+	NIM_CENTROID = 700,
+	NIM_DEV = 10,
+	FPGA_CENTROID = 860,
+	FPGA_DEV = 10
+};
+
+enum TRIGTYPE triggerType;
 
 
 // =======================================================

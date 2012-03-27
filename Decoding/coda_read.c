@@ -680,7 +680,7 @@ int createSQL(MYSQL *conn, char *schema){
 		"`spillID` MEDIUMINT UNSIGNED NOT NULL, "
 		"`runID` MEDIUMINT UNSIGNED NOT NULL, "
 		"`eventID` INT UNSIGNED NOT NULL, "
-		"`spillType` ENUM('BEGIN', 'END', 'OTHER'), "
+		"`spillType` ENUM('BOS', 'EOS', 'OTHER'), "
 		"`rocID` TINYINT UNSIGNED NOT NULL, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
 		"INDEX USING BTREE (spillID), "
@@ -714,10 +714,11 @@ int createSQL(MYSQL *conn, char *schema){
 		"`rocID` TINYINT UNSIGNED NOT NULL, "
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
-		"`detectorName` CHAR(6), "
+		"`detectorName` CHAR(16), "
 		"`elementID` TINYINT UNSIGNED, "
 		"`tdcTime` FLOAT, "
 		"`driftDistance` FLOAT, "
+		"`inTime` TINYINT, "
 		"`vmeTime` MEDIUMINT UNSIGNED, "
 //		"INDEX USING BTREE (runID), "
 //		"INDEX USING BTREE (spillID), "
@@ -739,9 +740,10 @@ int createSQL(MYSQL *conn, char *schema){
 		"`rocID` TINYINT UNSIGNED NOT NULL, "
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
-		"`detectorName` CHAR(6), "
+		"`detectorName` CHAR(16), "
 		"`elementID` TINYINT UNSIGNED, "
 		"`tdcTime` FLOAT, "
+		"`inTime` TINYINT, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
 //		"INDEX USING BTREE (runID), "
 //		"INDEX USING BTREE (spillID), "
@@ -762,10 +764,11 @@ int createSQL(MYSQL *conn, char *schema){
 		"`rocID` TINYINT UNSIGNED NOT NULL, "
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
-		"`detectorName` CHAR(6), "
+		"`detectorName` CHAR(16), "
 		"`elementID` TINYINT UNSIGNED, "
 		"`tdcTime` FLOAT, "
 		"`driftDistance` FLOAT, "
+		"`inTime` TINYINT, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
 		"INDEX USING BTREE (rocID, boardID, channelID) )"
 		"ENGINE=MEMORY") )
@@ -783,7 +786,7 @@ int createSQL(MYSQL *conn, char *schema){
 		"`rocID` TINYINT UNSIGNED NOT NULL, "
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
-		"`detectorName` CHAR(6), "
+		"`detectorName` CHAR(16), "
 		"`elementID` TINYINT UNSIGNED, "
 		"`value` INT NOT NULL, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
@@ -806,7 +809,7 @@ int createSQL(MYSQL *conn, char *schema){
 		"`rocID` TINYINT UNSIGNED NOT NULL, "
 		"`boardID` SMALLINT UNSIGNED NOT NULL, "
 		"`channelID` TINYINT UNSIGNED NOT NULL, "
-		"`detectorName` CHAR(6), "
+		"`detectorName` CHAR(16), "
 		"`elementID` TINYINT UNSIGNED, "
 		"`value` INT NOT NULL, "
 		"`vmeTime` MEDIUMINT UNSIGNED NOT NULL, "
@@ -924,6 +927,8 @@ int createSQL(MYSQL *conn, char *schema){
 
 	endSQLcreate = clock();
 	totalSQLcreate += ((double)( endSQLcreate - beginSQLcreate ) / (double)CLOCKS_PER_SEC);
+
+	
 
 	return 0;
 }
@@ -1356,6 +1361,9 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
@@ -1413,6 +1421,9 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
@@ -1446,6 +1457,9 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
@@ -1471,6 +1485,9 @@ int eventNewTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
@@ -1568,6 +1585,9 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 
 				tdcCount++;
@@ -1626,6 +1646,9 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
@@ -1660,6 +1683,9 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
@@ -1686,6 +1712,9 @@ int eventWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime[channel];
+				if ((triggerType==NIM && abs(tdcTime[channel]-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime[channel]-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 
@@ -1795,6 +1824,9 @@ int eventZSWCTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime;
+				if ((triggerType==NIM && abs(tdcTime-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 
 				tdcCount++;
@@ -1918,6 +1950,9 @@ int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 			v1495BoardID[v1495Count] = boardID;
 			v1495ChannelID[v1495Count] = channel;
 			v1495StopTime[v1495Count] = tdcTime;
+			if ((triggerType==NIM && abs(tdcTime-NIM_CENTROID)<=NIM_DEV) ||
+				(triggerType==FPGA && abs(tdcTime-FPGA_CENTROID)<=FPGA_DEV)) v1495InTime[v1495Count] = 1;
+			else v1495InTime[v1495Count] = 0;
 			v1495VmeTime[v1495Count] = vmeTime;
 			v1495Count++;
 		}
@@ -2016,6 +2051,9 @@ int eventReimerTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime;
+				if ((triggerType==NIM && abs(tdcTime-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 				
@@ -2141,6 +2179,9 @@ int eventJyTDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 				tdcBoardID[tdcCount] = boardID;
 				tdcChannelID[tdcCount] = channel;
 				tdcStopTime[tdcCount] = tdcTime;
+				if ((triggerType==NIM && abs(tdcTime-NIM_CENTROID)<=NIM_DEV) ||
+					(triggerType==FPGA && abs(tdcTime-FPGA_CENTROID)<=FPGA_DEV)) tdcInTime[tdcCount] = 1;
+				else tdcInTime[tdcCount] = 0;
 				tdcVmeTime[tdcCount] = vmeTime;
 				tdcCount++;
 				
@@ -2236,7 +2277,7 @@ int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
     int i, k;
     unsigned int num;
 
-    boardID = get_hex_bits(physicsEvent[j],7,4);
+    boardID = (0xFFFF & physicsEvent[j]);
     j++;
 
     for (i=0;i<32;i++) {
@@ -2268,6 +2309,12 @@ int eventTriggerSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j) {
 	
 	triggerBits = physicsEvent[j];
 	//printf("Event: %i, RocID: %i, TriggerBits: %.8x\n",codaEventNum, ROCID, physicsEvent[j]);
+	if((triggerBits & 0x1F)>0){
+		triggerType = NIM;
+	} else if ((triggerBits & 0x3E0)>0){
+		triggerType = FPGA;
+	}	
+
 	j++;
 
 	return j;
@@ -2602,8 +2649,10 @@ int make_tdc_query(MYSQL* conn){
 	}
 
 	for(k=0;k<tdcCount;k++){
-		fprintf(fp, "\\N\t%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\n", tdcRunID[k], tdcSpillID[k], 
-			tdcCodaID[k], tdcROC[k], tdcBoardID[k], tdcChannelID[k], tdcStopTime[k], tdcVmeTime[k]);
+		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\t%i\n", tdcRunID[k], tdcSpillID[k],
+			tdcCodaID[k], tdcROC[k], tdcBoardID[k], tdcChannelID[k], tdcStopTime[k], tdcInTime[k], tdcVmeTime[k]);
+		//printf("%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\t%i\n", tdcRunID[k], tdcSpillID[k],
+		//	tdcCodaID[k], tdcROC[k], tdcBoardID[k], tdcChannelID[k], tdcStopTime[k], tdcInTime[k], tdcVmeTime[k]);
 	}
 
 	// File MUST be closed before it can be loaded into MySQL
@@ -2611,10 +2660,6 @@ int make_tdc_query(MYSQL* conn){
 
 	endTDCfile = clock();
         totalTDCfile += ((double)( endTDCfile - beginTDCfile ) / (double)CLOCKS_PER_SEC);
-
-
-
-
 
 
 	sprintf(qryString,"LOAD DATA CONCURRENT LOCAL INFILE '%s' INTO TABLE tempHit", outputFileName);
@@ -2651,6 +2696,7 @@ int make_tdc_query(MYSQL* conn){
 	memset((void*)&tdcROC, 0, sizeof(unsigned char)*max_tdc_rows);
 	memset((void*)&tdcBoardID, 0, sizeof(unsigned short int)*max_tdc_rows);
 	memset((void*)&tdcStopTime, 0, sizeof(float)*max_tdc_rows);
+	memset((void*)&tdcInTime, 0, sizeof(unsigned char)*max_tdc_rows);
 	memset((void*)&tdcVmeTime, 0, sizeof(unsigned short)*max_tdc_rows);
 
 	beginTDCmap = clock();
@@ -2687,9 +2733,9 @@ int make_tdc_query(MYSQL* conn){
 	beginTimeTDCinsert = time(NULL);
 
 	if (mysql_query(conn, "INSERT INTO Hit (eventID, runID, spillID, "
-		"rocID, boardID, channelID, detectorName, elementID, tdcTime, driftDistance, vmeTime) "
+		"rocID, boardID, channelID, detectorName, elementID, tdcTime, driftDistance, inTime, vmeTime) "
 		"SELECT eventID, runID, spillID, rocID, boardID, channelID, "
-		"detectorName, elementID, tdcTime, driftDistance, vmeTime FROM tempHit") )
+		"detectorName, elementID, tdcTime, driftDistance, inTime, vmeTime FROM tempHit") )
 	{
 		printf("Error (102): %s\n", mysql_error(conn));
                 return 1;
@@ -2744,8 +2790,10 @@ int make_v1495_query(MYSQL* conn){
 	}
 
 	for(k=0;k<v1495Count;k++){
-		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\n", v1495RunID[k], v1495SpillID[k], 
-			v1495CodaID[k], v1495ROC[k], v1495BoardID[k], v1495ChannelID[k], v1495StopTime[k], v1495VmeTime[k]);
+		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\t%i\n", v1495RunID[k], v1495SpillID[k],
+			v1495CodaID[k], v1495ROC[k], v1495BoardID[k], v1495ChannelID[k], v1495StopTime[k], v1495InTime[k], v1495VmeTime[k]);
+		//printf("%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t\\N\t%i\t%i\n", v1495RunID[k], v1495SpillID[k],
+		//	v1495CodaID[k], v1495ROC[k], v1495BoardID[k], v1495ChannelID[k], v1495StopTime[k], v1495InTime[k], v1495VmeTime[k]);
 	}
 
 	// File MUST be closed before it can be loaded into MySQL
@@ -2753,8 +2801,6 @@ int make_v1495_query(MYSQL* conn){
 
 	endv1495file = clock();
         totalv1495file += ((double)( endv1495file - beginv1495file ) / (double)CLOCKS_PER_SEC);
-
-
 
 
 	beginv1495load = clock();
@@ -2792,6 +2838,7 @@ int make_v1495_query(MYSQL* conn){
 	memset((void*)&v1495ROC, 0, sizeof(int)*max_v1495_rows);
 	memset((void*)&v1495BoardID, 0, sizeof(int)*max_v1495_rows);
 	memset((void*)&v1495StopTime, 0, sizeof(double)*max_v1495_rows);
+	memset((void*)&v1495InTime, 0, sizeof(unsigned char)*max_v1495_rows);	
 	memset((void*)&v1495VmeTime, 0, sizeof(int)*max_v1495_rows);
 
 	beginv1495map = clock();
@@ -2803,7 +2850,7 @@ int make_v1495_query(MYSQL* conn){
                 "WHERE t.rocID = m.rocID AND "
                 "t.boardID = m.boardID AND t.channelID = m.channelID") )
         {
-                printf("Error (101): %s\n", mysql_error(conn));
+                printf("TriggerHit Mapping Error: %s\n", mysql_error(conn));
                 return 1;
         }
 
@@ -2816,11 +2863,11 @@ int make_v1495_query(MYSQL* conn){
 	beginTimev1495insert = time(NULL);
 
 	if (mysql_query(conn, "INSERT INTO TriggerHit (eventID, runID, spillID, "
-		"rocID, boardID, channelID, detectorName, elementID, tdcTime, vmeTime) "
+		"rocID, boardID, channelID, detectorName, elementID, tdcTime, inTime, vmeTime) "
 		"SELECT eventID, runID, spillID, rocID, boardID, channelID, "
-		"detectorName, elementID, tdcTime, vmeTime FROM tempHit") )
+		"detectorName, elementID, tdcTime, inTime, vmeTime FROM tempHit") )
 	{
-		printf("Error (102): %s\n", mysql_error(conn));
+		printf("Insert into TriggerHit Error: %s\n", mysql_error(conn));
                 return 1;
         }
 
@@ -2831,7 +2878,7 @@ int make_v1495_query(MYSQL* conn){
 
 	if (mysql_query(conn, "DELETE FROM tempHit") )
 	{
-		printf("Error (103): %s\n", mysql_error(conn));
+		printf("Delete from tempHit Error: %s\n", mysql_error(conn));
                 return 1;
         }
 
@@ -2866,8 +2913,8 @@ int make_latch_query(MYSQL *conn){
 	}
 
 	for(k=0;k<latchCount;k++){
-		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t\\N\t\\N\t%i\n", latchRunID[k], latchSpillID[k], latchCodaID[k],
-			latchROC[k], latchBoardID[k], latchChannelID[k], latchVmeTime[k]);
+		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t\\N\t\\N\t%i\t%i\n", latchRunID[k], latchSpillID[k], latchCodaID[k],
+			latchROC[k], latchBoardID[k], latchChannelID[k], latchInTime[k], latchVmeTime[k]);
 	}
 
 	// File MUST be closed before it can be loaded into MySQL
@@ -2898,6 +2945,7 @@ int make_latch_query(MYSQL *conn){
 	memset((void*)&latchSpillID, 0, sizeof(int)*max_latch_rows);
 	memset((void*)&latchROC, 0, sizeof(int)*max_latch_rows);
 	memset((void*)&latchBoardID, 0, sizeof(int)*max_latch_rows);
+	memset((void*)&latchInTime, 0, sizeof(unsigned char)*max_latch_rows);
 	memset((void*)&latchVmeTime, 0, sizeof(int)*max_latch_rows);
 	
 	if (mysql_query(conn, "UPDATE tempHit l, Mapping m\n"
@@ -2910,9 +2958,9 @@ int make_latch_query(MYSQL *conn){
         }
 
 	if (mysql_query(conn, "INSERT INTO Hit (runID, eventID, spillID, vmeTime, "
-		"rocID, boardID, channelID, detectorName, elementID) "
+		"rocID, boardID, channelID, detectorName, elementID, inTime) "
 		"SELECT runID, eventID, spillID, vmeTime, rocID, boardID, channelID, "
-		"detectorName, elementID FROM tempHit") )
+		"detectorName, elementID, inTime FROM tempHit") )
 	{
 		printf("Inserting Latch Data to Hit Table Error: %s\n", mysql_error(conn));
                 return 1;
@@ -2955,7 +3003,7 @@ int make_scaler_query(MYSQL* conn){
 	}
 
 	for(k=0;k<scalerCount;k++){
-		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%i\t%i\n", scalerRunID[k], scalerSpillID[k], 
+		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%i\t%i\n", runNum, scalerSpillID[k], 
 			scalerCodaID[k], scalerROC[k], scalerBoardID[k], scalerChannelID[k], 
 			scalerValue[k], scalerVmeTime[k]);
 	}
@@ -2984,7 +3032,7 @@ int make_scaler_query(MYSQL* conn){
 	// Clear the arrays
 	memset((void*)&scalerChannelID, 0, sizeof(int)*max_scaler_rows);
 	memset((void*)&scalerCodaID, 0, sizeof(int)*max_scaler_rows);
-	memset((void*)&scalerRunID, 0, sizeof(int)*max_scaler_rows);
+	memset((void*)&scalerRunID, 0, sizeof(unsigned short int)*max_scaler_rows);
 	memset((void*)&scalerSpillID, 0, sizeof(int)*max_scaler_rows);
 	memset((void*)&scalerROC, 0, sizeof(int)*max_scaler_rows);
 	memset((void*)&scalerBoardID, 0, sizeof(int)*max_scaler_rows);
@@ -2994,15 +3042,15 @@ int make_scaler_query(MYSQL* conn){
 	if (mysql_query(conn, "UPDATE tempScaler t, Mapping m\n"
                 "SET t.detectorName = m.detectorName, t.elementID = m.elementID\n"
                 "WHERE t.detectorName IS NULL AND t.rocID = m.rocID AND "
-                "t.channelID = m.channelID") )
+                "t.boardID = m.boardID AND t.channelID = m.channelID") )
         {
                 printf("Mapping Scaler Data Error: %s\n", mysql_error(conn));
                 return 1;
         }
 
 	if (mysql_query(conn, "INSERT INTO Scaler (runID, spillID, eventID, "
-		"rocID, channelID, detectorName, elementID, value, vmeTime) "
-		"SELECT runID, spillID, eventID, rocID, channelID, "
+		"rocID, boardID, channelID, detectorName, elementID, value, vmeTime) "
+		"SELECT runID, spillID, eventID, rocID, boardID, channelID, "
 		"detectorName, elementID, value, vmeTime FROM tempScaler") )
 	{
 		printf("Inserting from tempScaler to Scaler Error: %s\n", mysql_error(conn));
