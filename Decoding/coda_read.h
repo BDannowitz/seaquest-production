@@ -14,9 +14,11 @@
 int handle;
 
 //Decoder Values
-int online, sampling;
+int online;
 char *fileName;
 char end_file_name [1000];
+unsigned char sampling;
+unsigned short int sampling_count;
 
 // Run Values
 char descriptor[10000];
@@ -184,7 +186,7 @@ double timeTotal;
 double cpuTotal; 
 
 // v1495 debugging variables
-int case1, case2, case3, case4, case5, case6, case7, case8;
+int all1495, good1495, d1ad1495, d2ad1495, d3ad1495;
 
 // Some Constants used.
 enum { SUCCESS = 0 };

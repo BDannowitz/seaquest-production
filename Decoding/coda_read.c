@@ -61,8 +61,7 @@ FILE *fp;
 long unsigned int fileSize;
 int stopped = 0;
 
-
-case1 = 0; case2 = 0; case3 = 0; case4 = 0; case5 = 0; case6 = 0;
+all1495=0; good1495=0; d1ad1495=0; d2ad1495=0; d3ad1495=0;
 
 // Some other variables used
 int i, j, physEvCount, status;
@@ -84,6 +83,7 @@ slowControlCount = 0;
 fileNameBak = malloc(10 * sizeof (*fileNameBak));
 fileName = malloc(10 * sizeof (*fileName));
 sprintf(end_file_name, "");
+sampling_count = 0;
 
 // Handle the command-line options
 if (initialize(argc, argv)) return 1;
@@ -265,7 +265,9 @@ for(i=0; eventIdentifier != EXIT_CASE; i++){
 		
 		printf("CPU Time submitting CODA Events: %fs (%f%%)\n", totalCodaBind, (totalCodaBind/cpuTotal)*100);
 		printf("CPU Time submitting Spill Events: %fs (%f%%)\n\n", totalSpillBind, (totalSpillBind/cpuTotal)*100);
-		
+	
+		printf("Total v1495 events: %i, Good Events: %i, 0xD1AD Events: %i, 0xD2AD Events: %i, 0xD3AD Events: %i\n\n", all1495, good1495,d1ad1495,d2ad1495,d3ad1495);
+	
 		printf("SlowControl Count: %i\n", slowControlCount);
 		printf("Real Time: %f\n", timeTotal);
 		printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n", i, physEvCount);
@@ -482,6 +484,8 @@ printf("Real Time submitting SlowControl Data: %fs (%f%%)\n\n", totalTimeSlowloa
 printf("CPU Time submitting CODA Events: %fs (%f%%)\n", totalCodaBind, (totalCodaBind/cpuTotal)*100);
 printf("CPU Time submitting Spill Events: %fs (%f%%)\n\n", totalSpillBind, (totalSpillBind/cpuTotal)*100);
 
+printf("Total v1495 events: %i, Good Events: %i, 0xD1AD Events: %i, 0xD2AD Events: %i, 0xD3AD Events: %i\n\n", all1495,good1495,d1ad1495,d2ad1495,d3ad1495);
+
 printf("SlowControl Count: %i\n", slowControlCount);
 printf("Real Time: %f\n", timeTotal);
 printf("%i Total CODA Events Decoded\n%i Physics Events Decoded\n", i, physEvCount);
@@ -515,6 +519,7 @@ int initialize(int argc,char* argv[]){
   server = "e906-gat2.fnal.gov";
   user = "production";
   password = "***REMOVED***";
+  sampling = 0;
 
   for (i=1;i<argc;i++) 
   {
@@ -549,7 +554,7 @@ int initialize(int argc,char* argv[]){
 	   schema = argv[i+1];
 	}
 	else if (!strcmp(argv[i],"-s")){
-	   sampling = atoi(argv[i+1]);
+	   sampling = 1;
 	}
 	// Print Help
 	else if (!strcmp(argv[i],"help")){
@@ -559,7 +564,7 @@ int initialize(int argc,char* argv[]){
 		"-u: user (optional: default 'seaguest')\n"
 		"-p: password (optional: default password)\n"
 		"-d: schema (optional: default 'test_coda')\n"
-		"-s: sampling mode with X events sampled\n"
+		"-s: sampling mode with 1 in 10 physics events samples\n"
 		"--force: force overwrite any pre-existing run data\n\n");	
 	}
   }
@@ -575,6 +580,7 @@ int initialize(int argc,char* argv[]){
 		"-u: user (optional: default 'seaguest')\n"
 		"-p: password (optional: default password)\n"
 		"-d: schema (optional: default 'test_coda')\n"
+		"-s: sampling mode with 1 in 10 physics events samples\n"
 		"--force: force overwrite any pre-existing run data\n\n");
    	return 1;
   	}
@@ -1157,38 +1163,24 @@ void showWarnings(MYSQL *conn){
 
 int eventRunDescriptorSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 
-	char text [10000]="";
-	char remnant [10000]="";
 	char descriptor [10000]="";
-	char j;
-	char qryString [5000]="";
-	int value[4];
-	int i, k, t;
+	char qryString [10000]="";
+	int i, x;
+	unsigned int number;
 	
 	evLength = physicsEvent[0];
-
-	// This puts the entirety of the ASCII event into one string
-	for (i=4;i<(evLength+2);i++) {
-		// The %.8lx ensures that no leading zeros are left off
-		sprintf(text, "%s%.8lx", text, physicsEvent[i]);		
-	}
-
-	i = 0;
 	
-	// sscanf grabs the first two hex digits from the string until it gets 4 of em.
-	// Since the values are given parsed and reversed, ("HELLO" -> "LLEHO")
-	// 	This then reverses every four characters and writes them to string.
-	while ( sscanf(text, "%2x%s", &value[i%4], remnant) == 2 )
-	{
-		strcpy(text, remnant);
-		if((i%4)==3){
-			sprintf(descriptor, "%s%c%c%c%c", descriptor, value[3], value[2], value[1], value[0]);
+	// Assemble the descriptor from the hex
+	for (x=4;x<(evLength+1);x++) {
+		number = physicsEvent[x];
+		for(i=0;i<4;i++){
+			sprintf(descriptor,"%s%c",descriptor,(number&0xFF));
+			number = number>>8;
 		}
-		i++;
 	}
 
+	// Create and execute the query that updates the descriptor field
 	sprintf(qryString, "UPDATE Run SET runDescriptor = \"%s\" WHERE runID = %i", descriptor, runNum);	
-	
 	if(mysql_query(conn, qryString))
 	{
 		printf("%s\n", qryString);
@@ -1884,43 +1876,13 @@ int eventv1495TDCSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j){
 	// Check to see if there is an error in next word
 	// If so, don't submit the information from this board for this event
 	error = get_hex_bit(physicsEvent[j+1],3);
-	if (error != 0x1) {
-		// printf("Coda Event Number: %i\n", codaEventNum);
-		// printf("v1495 BoardID: %.4x\n", boardID);
-		// printf("StopTime: %.8x\n", physicsEvent[j+1]);
-		// printf("#DataWords: %.8x\n", physicsEvent[j]);
-		if ((get_hex_bits(physicsEvent[j],3,4))>255){
-			if (get_hex_bits(physicsEvent[j],3,4)==0xd1ad){
-				case4++;
-				//printf("Case: 4, Event: %i, RocID: %i, Board: %.4x, TriggerBits: %i, "
-				//"Channel exceeds 255 in v1495 format: %.8x\n", codaEventNum, 
-				//ROCID, boardID, triggerBits, physicsEvent[j]);
-			} else if (get_hex_bits(physicsEvent[j],3,4)==0xd2ad){ 
-				case6++;
-			} else if (get_hex_bits(physicsEvent[j],3,4)==0xd3ad){
-				case7++;
-			} else {
-				case8++; 
-			}
-		} else {
-			//printf("Case: 2, Event: %i, RocID: %i, Board: %.4x, TriggerBits: %i, "
-			//"Channel exceeds 255 in v1495 format: %.8x\n", codaEventNum, 
-			//ROCID, boardID, triggerBits, physicsEvent[j]);
-			case2++;
-		}	
-		ignore = 1;
-	} else {
+	if (error != 0x1) { ignore = 1; }
 
-		if ((get_hex_bits(physicsEvent[j],3,4))>255){
-			if (get_hex_bits(physicsEvent[j],3,4)==0xdead){
-				case3++;
-			} else {
-				case5++;
-			}
-		} else {
-			case1++;
-		}
-	}
+	all1495++;
+	if ((physicsEvent[j] & 0xFFFF) == 0xD1AD) d1ad1495++;
+	if ((physicsEvent[j+1] & 0xFFFF) == 0xD2AD) d2ad1495++;
+	if ((physicsEvent[j+1] & 0xFFFF) == 0xD3AD) d3ad1495++;
+	if (((physicsEvent[j] & 0xFFFF) != 0xD1AD) && ((physicsEvent[j+1] & 0xFFFF) != 0xD2AD) && ((physicsEvent[j+1] & 0xFFFF) != 0xD3AD)) good1495++;
 
 	// Contains 0x000000xx where xx is number of channel entries
 	numChannels = (physicsEvent[j] & 0x0000FFFF);
@@ -2352,6 +2314,8 @@ int eventSQL(MYSQL *conn, unsigned int physicsEvent[40000]){
 		
 		case 14:
 		  j = 7;
+		  if(sampling && sampling_count<10){ sampling_count++; return 0; }
+		  else if (sampling && sampling_count==10) { sampling_count=0; }
 		  while (j<evLength){
 		    rocEvLength = physicsEvent[j];
 		    v = j+rocEvLength;
