@@ -9,6 +9,7 @@
 int MAPPING = 0;
 int CALIBRATION = 1;
 int HIGHVOLTAGE = 2;
+int TIMING = 3;
 int COPY = 0;
 int LOAD = 1;
 
@@ -22,6 +23,7 @@ char *database;
 
 int mode, method;
 char *mode_string;
+int force;
 
 int initialize(int argc,char* argv[]);
 int overwrite(MYSQL *conn);
@@ -94,15 +96,16 @@ int main(int argc,char* argv[]){
 int initialize(int argc,char* argv[]){
 
   int i;
-  int required[5];
+  int required[7];
 
-  for (i=0;i<5;i++) { required[i]=0; }
+  for (i=0;i<7;i++) { required[i]=0; }
   
   // Set default values
   server = "e906-gat2.fnal.gov";
   user = "production";
   password = "***REMOVED***";
   database = "";
+  force = 0;
 
   for (i=0;i<argc;i++){
 	// Filename
@@ -127,15 +130,20 @@ int initialize(int argc,char* argv[]){
 		mode = CALIBRATION;
 		required[3]=1;
 	}
+	// Timing
+	else if (!strcmp(argv[i],"-t")){
+		mode = TIMING;
+		required[4]=1;
+	}
 	// High Voltage Map
 	else if (!strcmp(argv[i],"-hv")){
 		mode = HIGHVOLTAGE;
-		required[4]=1;
+		required[5]=1;
 	}
 	// Version
 	else if (!strcmp(argv[i],"-d")){
 		destination = argv[i+1];
-		required[5]=1;
+		required[6]=1;
 	}
 	// MySQL Host
 	else if (!strcmp(argv[i],"-h")){
@@ -149,12 +157,17 @@ int initialize(int argc,char* argv[]){
 	else if (!strcmp(argv[i],"-p")){
 		password = argv[i+1];
 	}
+	// Force Overwrite
+	else if (!strcmp(argv[i],"--force")){
+		force = 1;
+	}
 	// Print Help
 	else if (!strcmp(argv[i],"help")){
 		printf("\n\n-f: File to upload\n"
 			"-s: Source schema\n"
 			"-m: Load a mapping file\n"
 			"-c: Load a calibration file\n"
+			"-t: Load a timing file\n"
 			"-hv: Load high voltage mapping file\n"
 			"-d: Destination schema name (10P01-A, 10P02-B, 11P03-B, etc)\n"
 			"-h: server host (optional: default 'e906-gat2.fnal.gov')\n"
@@ -164,16 +177,18 @@ int initialize(int argc,char* argv[]){
   }
 
   // If every int in the array is a 1, then all necessary information has been entered
-  if ((required[0] || required[1]) && (required[2] || required[3] || required[4]) && (required[5])){
+  if ((required[0] || required[1]) && (required[2] || required[3] || required[4] || required[5]) && (required[6])){
 	if( mode==CALIBRATION ) mode_string="Calibration";
 	else if ( mode==MAPPING ) mode_string="Mapping";
 	else if ( mode==HIGHVOLTAGE ) mode_string="HVMap";
+	else if ( mode==TIMING ) mode_string="Timing";
   } else {
 	printf("Some required options were not included. Exiting!\n");
     	printf("\n\n-f: File to upload\n"
 			"-s: Source schema\n"
 			"-m: Load a mapping file\n"
 			"-c: Load a calibration file\n"
+			"-t: Load a timing file\n"
 			"-hv: Load high voltage mapping file\n"
 			"-d: Destination schema name (10P01-A, 10P02-B, 11P03-B, etc)\n"
 			"-h: server host (optional: default 'e906-gat2.fnal.gov')\n"
@@ -190,22 +205,32 @@ int overwrite(MYSQL *conn){
   char overwrite_flag[32];
 
   if ( table_exists(conn, destination) ) {
-	printf("WARNING: Table already exists. Overwrite? (y/n)\n>> ");
-	scanf("%s",&overwrite_flag);
-	if ( !strcmp(overwrite_flag,"y") ){
-		sprintf(qryString,"DROP TABLE %s.%s", destination, mode_string);
-
+	
+	if (force == 0){
+		printf("WARNING: Table already exists. Overwrite? (y/n)\n>> ");
+		scanf("%s",&overwrite_flag);
+		if ( !strcmp(overwrite_flag,"y") ){
+			sprintf(qryString,"DROP TABLE IF EXISTS %s.%s", destination, mode_string);
+	
+			if(mysql_query(conn, qryString)){
+				printf("%s\n", qryString);
+				printf(">> Error clearing out previous table: %s\n", mysql_error(conn));
+				return 1;
+			}
+		} else {
+			printf("Exiting...\n\n");
+			return 1;
+		}
+  	} else if (force == 1) {
+		sprintf(qryString,"DROP TABLE IF EXISTS %s.%s", destination, mode_string);
+	
 		if(mysql_query(conn, qryString)){
 			printf("%s\n", qryString);
 			printf(">> Error clearing out previous table: %s\n", mysql_error(conn));
 			return 1;
 		}
-	} else {
-		printf("Exiting...\n\n");
-		return 1;
 	}
   }
-
 
   return 0;
 }
@@ -303,12 +328,13 @@ int create_table(MYSQL *conn){
   if ( mode==CALIBRATION ){
   	// Make the calibration table if it doesn't yet exist
   	sprintf(qryString, "CREATE TABLE IF NOT EXISTS `Calibration` (\n"
-  		"`rocID INT NOT NULL, \n"
-		"`boardID` int NOT NULL, \n"
-  		"`channelID` int NOT NULL, \n"
-  		"`t0` double NOT NULL, \n"
-  		"`sdtr` double NOT NULL, \n"
-  		"`comment` text NOT NULL, \n"
+  		"`rocID` TINYINT UNSIGNED NOT NULL, \n"
+		"`boardID` SMALLINT UNSIGNED NOT NULL, \n"
+		"`channelID` TINYINT UNSIGNED NOT NULL, \n"
+		"`t0` double, \n"
+		"`tMin` double, \n"
+		"`tMax` double, \n"
+		"INDEX (rocID, boardID, channelID)\n"
 		") ENGINE=MyISAM DEFAULT CHARSET=latin1");
  
   	if( mysql_query(conn, qryString) )
@@ -317,20 +343,36 @@ int create_table(MYSQL *conn){
 		return 1;
   	}
 
+  } else if ( mode==TIMING ){
+  	// Make the calibration table if it doesn't yet exist
+  	sprintf(qryString, "CREATE TABLE IF NOT EXISTS `Timing` (\n"
+  		"`rocID` TINYINT UNSIGNED NOT NULL, \n"
+		"`boardID` SMALLINT UNSIGNED NOT NULL, \n"
+		"`channelID` TINYINT UNSIGNED NOT NULL, \n"
+		"`tPeak` double, \n"
+		"`width` double, \n"
+		"INDEX (rocID, boardID, channelID)\n"
+		") ENGINE=MyISAM DEFAULT CHARSET=latin1");
+ 
+  	if( mysql_query(conn, qryString) )
+  	{
+		printf("Create Calibration Table Error: %s\n", mysql_error(conn));
+		return 1;
+  	}
   } else if ( mode==MAPPING ){
   	// Make the mapping table
   	sprintf(qryString, "CREATE TABLE IF NOT EXISTS `Mapping` (\n"
-  		"`rocID` INT NOT NULL, \n"
-		"`boardID` INT, \n"
-		"`channelID` INT NOT NULL, \n"
-		"`lsbID` INT, \n"
+  		"`rocID` TINYINT UNSIGNED NOT NULL, \n"
+		"`boardID` SMALLINT UNSIGNED NOT NULL, \n"
+		"`channelID` TINYINT UNSIGNED NOT NULL, \n"
+		"`lsbID` INT UNSIGNED, \n"
 		"`asdqCableID` VARCHAR(32), \n"
-		"`asdqChannelID` INT, \n"
-		"`detectorName` CHAR(6), \n"
+		"`asdqChannelID` INT UNSIGNED, \n"
+		"`detectorName` CHAR(16), \n"
 		"`elementID` TINYINT UNSIGNED, \n"
 		"INDEX (rocID, boardID, channelID)\n"
 		") ENGINE=MyISAM DEFAULT CHARSET=latin1");
-	
+
 	if( mysql_query(conn, qryString) )
 	{
 		printf("Create Mapping Table Error: %s\n", mysql_error(conn));
@@ -342,7 +384,7 @@ int create_table(MYSQL *conn){
   	sprintf(qryString, "CREATE TABLE IF NOT EXISTS `HVMap` (\n"
   		"`crateID` INT(11) NOT NULL, \n"
 		"`channelID` int(11), \n"
-		"`detectorName` CHAR(6), \n"
+		"`detectorName` CHAR(16), \n"
 		"`elementID` TINYINT UNSIGNED\n"
 		"`nominalVoltage` INT\n"
 		"`setVoltage` INT\n"
