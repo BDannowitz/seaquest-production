@@ -86,9 +86,6 @@ sampling_count 	= 1;
 optimCounter 	= 1;
 row_count	= 0;
 
-// I MADE BIG CHANGES, AND NOTHING HURT
-// Okay, now things hurt.
-
 
 fileNameBak = malloc(10 * sizeof (*fileNameBak));
 fileName = malloc(10 * sizeof (*fileName));
@@ -2577,6 +2574,8 @@ int make_tdc_query(MYSQL* conn){
 	pid = getpid();
 
 	sprintf(outputFileName,".tdc.%i.temp", pid);
+        
+        printf("I Made a change here!");
 	
 	// Open the temp file 
 	if (file_exists(outputFileName)) remove(outputFileName);
