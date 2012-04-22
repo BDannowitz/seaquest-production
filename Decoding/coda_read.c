@@ -86,6 +86,8 @@ sampling_count 	= 1;
 optimCounter 	= 1;
 row_count	= 0;
 
+// Changes here.
+
 fileNameBak = malloc(10 * sizeof (*fileNameBak));
 fileName = malloc(10 * sizeof (*fileName));
 sprintf(end_file_name, "");
