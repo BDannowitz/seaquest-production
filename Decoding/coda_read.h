@@ -7,65 +7,86 @@
 #include <mysql.h>
 #include <string.h>
 #include <unistd.h>
+#include <regex.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 // EVIO Values
 int handle;
 
 //Decoder Values
-int online, sampling;
+int online;
 char *fileName;
 char end_file_name [1000];
+char next_run_name [1000];
+unsigned char sampling;
+unsigned short int sampling_count;
+unsigned short int optimCounter;
 
 // Run Values
 char descriptor[10000];
-int runNum, runType, numEventsInRunThusFar, runTime;
+unsigned short int runNum;
+int runType, numEventsInRunThusFar;
+unsigned int runTime;
 
 // CODA Event Values
 double goEventTime, endEventTime, stopCountTime;
-int codaEventNum, eventType, evLength, evNum, triggerBits, dataQuality;
+unsigned int codaEventNum;
+int eventType, evLength, evNum; 
+unsigned short int triggerBits, dataQuality;
+unsigned short int codaEvVmeTime;
+unsigned int eventNum;
+
+// Counters
+int slowControlCount;
 
 // ROC Values
-int ROCID, boardID; 
+unsigned char ROCID;
+unsigned short int boardID; 
 
 // TDC Values
-int const max_tdc_rows = 200;
-int tdcCodaID[200], tdcRunID[200], tdcSpillID[200];
-int tdcROC[200], tdcBoardID[200], tdcChannelID[200];
-int tdcStopTime[200], tdcVmeTime[200], tdcSignalWidth[200];
-int tdcCount;
+int const max_tdc_rows = 5000;
+unsigned int tdcCodaID[5000];
+unsigned char tdcROC[5000], tdcChannelID[5000];
+unsigned short int tdcBoardID[5000], tdcRunID[5000], tdcSpillID[5000];
+float tdcStopTime[5000];
+unsigned short int tdcCount;
 char errString[1028];
+unsigned int row_count;
 
 // v1495 Values
-int const max_v1495_rows = 200;
-int v1495RocID[200], v1495CodaID[200], v1495RunID[200], v1495SpillID[200];
-int v1495ROC[200], v1495BoardID[200], v1495ChannelID[200];
-int v1495StopTime[200], v1495VmeTime[200];
+int const max_v1495_rows = 5000;
+int v1495RocID[5000], v1495CodaID[5000], v1495RunID[5000], v1495SpillID[5000];
+int v1495ROC[5000], v1495ChannelID[5000];
+unsigned short int v1495BoardID[5000];
+float v1495StopTime[5000];
 int v1495Count;
 
-// New TDC Values
-double const trigger_pattern[8] = { 0.0, 0.0, 0.0, 0.0, 10.0, 2.5, 5.0, 7.5 };
-double const channel_pattern[8] = { 10.0, 2.5, 5.0, 7.5, 0.0, 7.5, 5.0, 2.5 };
-
-// WC TDC Values
-double const wc_trigger_pattern[8] = { 0.0, 0.0, 0.0, 0.0, 40.0, 10.0, 20.0, 30.0 };
-double const wc_channel_pattern[8] = { 40.0, 10.0, 20.0, 30.0, 0.0, 30.0, 20.0, 10.0 };
-
 // Latch Values
-int const max_latch_rows = 200;
-int latchRocID[200], latchCodaID[200], latchRunID[200], latchSpillID[200], latchROC[200];
-int latchBoardID[200], latchChannelID[200], latchVmeTime[200];
+int const max_latch_rows = 5000;
+int latchRocID[5000], latchCodaID[5000], latchRunID[5000], latchSpillID[5000], latchROC[5000];
+int latchBoardID[5000], latchChannelID[5000];
 int latchCount;
 
 // Spill Values
-int spillID, spillVmeTime;
+unsigned short int spillID, spillVmeTime;
+unsigned char spillType;
 
 // Scaler Values
-char sqlScalerQuery[100000];
-int const max_scaler_rows = 200;
-int scalerCodaID[200], scalerRunID[200], scalerSpillID[200], scalerROC[200];
-int scalerChannelID[200], scalerValue[200], scalerVmeTime[200];
+int const max_scaler_rows = 500;
+int scalerCodaID[500], scalerSpillID[500], scalerROC[500];
+int scalerRunID[500];
+int scalerBoardID[500], scalerChannelID[500], scalerValue[500];
 int scalerCount;
+
+// New TDC Values
+double const trigger_pattern[8] = { 0.0, 0.0, 0.0, 0.0, 10.0, 2.5, 5.0, 7.5 };
+double const channel_pattern[8] = { 10.0, 2.5, 5.0, 7.5, 0.0, 0.0, 0.0, 0.0 };
+
+// WC TDC Values
+double const wc_trigger_pattern[8] = { 0.0, 0.0, 0.0, 0.0, 40.0, 10.0, 20.0, 30.0 };
+double const wc_channel_pattern[8] = { 40.0, 10.0, 20.0, 30.0, 0.0, 0.0, 0.0, 0.0 };
 
 // Some global variables
 double vmeTime;
@@ -76,21 +97,98 @@ int force;
 MYSQL_STMT *runStmt;
 MYSQL_STMT *spillStmt;
 MYSQL_STMT *codaEvStmt;
-MYSQL_STMT *hitStmt;
-MYSQL_STMT *v1495Stmt;
-MYSQL_BIND runBind[3];
+MYSQL_BIND runBind[2];
 MYSQL_BIND spillBind[6];
-MYSQL_BIND codaEvBind[6];
-MYSQL_BIND hitBind[1800];
-MYSQL_BIND v1495Bind[1600];
+MYSQL_BIND codaEvBind[7];
 char *server;
 char *user;
 char *password;
 char *database;
 char *schema;
 
+
+// Benchmarking Values
+
+clock_t beginSQLcreate, endSQLcreate;
+double totalSQLcreate;
+
+time_t beginTimeIndexing, endTimeIndexing;
+double totalTimeIndexing;
+
+clock_t beginTDCfile, endTDCfile;
+double totalTDCfile;
+clock_t beginTDCload, endTDCload;
+double totalTDCload;
+clock_t beginTDCmap, endTDCmap;
+double totalTDCmap;
+clock_t beginTDCinsert, endTDCinsert;
+double totalTDCinsert;
+clock_t beginTDCwhole, endTDCwhole;
+double totalTDCwhole;
+
+time_t beginTimeTDCload, endTimeTDCload;
+double totalTimeTDCload;
+time_t beginTimeTDCmap, endTimeTDCmap;
+double totalTimeTDCmap;
+time_t beginTimeTDCinsert, endTimeTDCinsert;
+double totalTimeTDCinsert;
+
+
+clock_t beginv1495file, endv1495file;
+double totalv1495file;
+clock_t beginv1495load, endv1495load;
+double totalv1495load;
+clock_t beginv1495map, endv1495map;
+double totalv1495map;
+clock_t beginv1495insert, endv1495insert;
+double totalv1495insert;
+
+time_t beginTimev1495load, endTimev1495load;
+double totalTimev1495load;
+time_t beginTimev1495map, endTimev1495map;
+double totalTimev1495map;
+time_t beginTimev1495insert, endTimev1495insert;
+double totalTimev1495insert;
+
+
+clock_t beginSlowfile, endSlowfile;
+double totalSlowfile;
+clock_t beginSlowload, endSlowload;
+double totalSlowload;
+time_t beginTimeSlowload, endTimeSlowload;
+double totalTimeSlowload;
+
+clock_t beginCodaBind, endCodaBind;
+double totalCodaBind;
+
+clock_t beginSpillBind, endSpillBind;
+double totalSpillBind;
+
+clock_t beginJyTDC, endJyTDC;
+double totalJyTDC;
+
+clock_t beginReimerTDC, endReimerTDC;
+double totalReimerTDC;
+
+clock_t beginv1495, endv1495;
+double totalv1495;
+
+clock_t beginZSWC, endZSWC;
+double totalZSWC;
+
+clock_t beginWC, endWC;
+double totalWC;
+
+clock_t beginTDC, endTDC;
+double totalTDC;
+
+clock_t cpuStart, cpuEnd;
+time_t timeStart, timeEnd; 
+double timeTotal;
+double cpuTotal; 
+
 // v1495 debugging variables
-int case1, case2, case3, case4, case5, case6;
+int all1495, good1495, d1ad1495, d2ad1495, d3ad1495;
 
 // Some Constants used.
 enum { SUCCESS = 0 };
@@ -103,17 +201,30 @@ enum { PHYSICS_EVENT = 0x10cc };
 enum { EXIT_CASE = 0x66666666 };
 enum { ON = 1 };
 enum { OFF = 0 };
-enum { WAIT_TIME = 5 };
+enum { WAIT_TIME = 2 };
+enum TRIGTYPE {
+	NIM,
+	FPGA
+};
+
+enum {
+	NIM_CENTROID = 700,
+	NIM_DEV = 10,
+	FPGA_CENTROID = 860,
+	FPGA_DEV = 10
+};
+
+enum TRIGTYPE triggerType;
 
 
 // =======================================================
 // BEGIN FUNCTION DECLARATIONS:
 // =======================================================
 // Checks to see if the CODA file exists
-int file_exists(const char * fileName);
+int file_exists(char *fileName);
 // -------------------------------------------------------
 // Handles command-line options
-int initialize(int argc,char* argv[]);
+int initialize(int argc, char* argv[]);
 // -------------------------------------------------------
 // Uses evOpen from evio library to open the CODA file
 //int open_coda_file(char *filename);
@@ -122,7 +233,7 @@ int initialize(int argc,char* argv[]);
 int close_coda_file();
 // -------------------------------------------------------
 // Uses evRead from the evio library to fill the buffer with the next event
-int read_coda_file(unsigned int physicsEvent[100000],int evnum);
+int read_coda_file(unsigned int physicsEvent[40000],int evnum);
 // -------------------------------------------------------
 // Retrieves a certain number of hex digits from an unsigned int starting
 // 	a certain number of digits from the right of the number
@@ -143,38 +254,32 @@ int get_bin_bit(unsigned int binNum, int numBitFromRight);
 int createSQL(MYSQL *conn, char *schema);
 // -------------------------------------------------------
 // This function handles prestart-type CODA events
-int prestartSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int prestartSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles goEvent-type CODA events
-int goEventSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int goEventSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles physics-type CODA events
-int eventSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int eventSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles endEvent-type CODA events
-int endEventSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int endEventSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function handles Spill Begin and Spill End events
-int eventSpillSQL(MYSQL *conn, unsigned int physicsEvent[100000]);
+int eventSpillSQL(MYSQL *conn, unsigned int physicsEvent[40000]);
 // -------------------------------------------------------
 // This function hanldes Scaler-type events
-int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[100000], int j);
+int eventScalerSQL(MYSQL *conn, unsigned int physicsEvent[40000], int j);
 // -------------------------------------------------------
 // This function, if reading while on-line, will wait and try again if
 // 	an EOF is encountered before the End Event
-int retry(int codaEventCount, unsigned int physicsEvent[100000]);
+int retry(char *file, long unsigned int oldfilesize, int codaEventCount, unsigned int physicsEvent[40000]);
 // --------------------------------------------------------
 // This will make a 200-row insert statement with TDC data
 int make_data_query(MYSQL* conn);
 // --------------------------------------------------------
 // This will make a 200-row insert statement with Latch data
 int make_latch_query(MYSQL* conn);
-// --------------------------------------------------------
-// As the deCODA winds down, this submits any remaing TDC data
-int send_final_data(MYSQL* conn);
-// --------------------------------------------------------
-// As the deCODA winds down, this submits any remaing Latch data
-int send_final_latch(MYSQL* conn);
 // --------------------------------------------------------
 
 // ========================================================
@@ -296,7 +401,7 @@ int get_bin_bits(unsigned int binNum, int numBitFromRight, int numBits)
     return binBits;
 }
 
-int read_coda_file(unsigned int physicsEvent[100000],int evnum)
+int read_coda_file(unsigned int physicsEvent[40000],int evnum)
 {
 // ================================================================
 //
@@ -320,7 +425,7 @@ int close_coda_file()
   return evClose(handle);
 }
 
-int file_exists(const char * fileName)
+int file_exists(char *file)
 {
 // ================================================================
 //
@@ -328,11 +433,11 @@ int file_exists(const char * fileName)
 // Returns: 	1 if file exists, 
 //		0 if it does not
 
-    FILE * file;
+    FILE * fp;
 
-    if (file = fopen(fileName, "r"))
+    if (fp = fopen(file, "r"))
     {
-        fclose(file);
+        fclose(fp);
         return 1;
     }
     return 0;
