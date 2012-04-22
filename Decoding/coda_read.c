@@ -86,6 +86,11 @@ sampling_count 	= 1;
 optimCounter 	= 1;
 row_count	= 0;
 
+
+
+// Changes here.
+// MORE CHANGES!
+row_count       = 0;
 // Changes here.
 // MORE CHANGES!
 row_count       = 0;
