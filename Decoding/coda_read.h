@@ -9,6 +9,8 @@
 #include <unistd.h>
 #include <regex.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 // EVIO Values
 int handle;
@@ -17,8 +19,10 @@ int handle;
 int online;
 char *fileName;
 char end_file_name [1000];
+char next_run_name [1000];
 unsigned char sampling;
 unsigned short int sampling_count;
+unsigned short int optimCounter;
 
 // Run Values
 char descriptor[10000];
@@ -31,7 +35,8 @@ double goEventTime, endEventTime, stopCountTime;
 unsigned int codaEventNum;
 int eventType, evLength, evNum; 
 unsigned short int triggerBits, dataQuality;
-
+unsigned short int codaEvVmeTime;
+unsigned int eventNum;
 
 // Counters
 int slowControlCount;
@@ -44,27 +49,24 @@ unsigned short int boardID;
 int const max_tdc_rows = 5000;
 unsigned int tdcCodaID[5000];
 unsigned char tdcROC[5000], tdcChannelID[5000];
-unsigned short int tdcBoardID[5000], tdcRunID[5000], tdcSpillID[5000], tdcVmeTime[5000];
+unsigned short int tdcBoardID[5000], tdcRunID[5000], tdcSpillID[5000];
 float tdcStopTime[5000];
-unsigned char tdcInTime[5000];
 unsigned short int tdcCount;
 char errString[1028];
+unsigned int row_count;
 
 // v1495 Values
 int const max_v1495_rows = 5000;
 int v1495RocID[5000], v1495CodaID[5000], v1495RunID[5000], v1495SpillID[5000];
 int v1495ROC[5000], v1495ChannelID[5000];
 unsigned short int v1495BoardID[5000];
-unsigned char v1495InTime[5000];
 float v1495StopTime[5000];
-int v1495VmeTime[5000];
 int v1495Count;
 
 // Latch Values
 int const max_latch_rows = 5000;
 int latchRocID[5000], latchCodaID[5000], latchRunID[5000], latchSpillID[5000], latchROC[5000];
-int latchBoardID[5000], latchChannelID[5000], latchVmeTime[5000];
-unsigned char latchInTime[5000];
+int latchBoardID[5000], latchChannelID[5000];
 int latchCount;
 
 // Spill Values
@@ -75,7 +77,7 @@ unsigned char spillType;
 int const max_scaler_rows = 500;
 int scalerCodaID[500], scalerSpillID[500], scalerROC[500];
 int scalerRunID[500];
-int scalerBoardID[500], scalerChannelID[500], scalerValue[500], scalerVmeTime[500];
+int scalerBoardID[500], scalerChannelID[500], scalerValue[500];
 int scalerCount;
 
 // New TDC Values
@@ -97,7 +99,7 @@ MYSQL_STMT *spillStmt;
 MYSQL_STMT *codaEvStmt;
 MYSQL_BIND runBind[2];
 MYSQL_BIND spillBind[6];
-MYSQL_BIND codaEvBind[5];
+MYSQL_BIND codaEvBind[7];
 char *server;
 char *user;
 char *password;
@@ -199,7 +201,7 @@ enum { PHYSICS_EVENT = 0x10cc };
 enum { EXIT_CASE = 0x66666666 };
 enum { ON = 1 };
 enum { OFF = 0 };
-enum { WAIT_TIME = 5 };
+enum { WAIT_TIME = 2 };
 enum TRIGTYPE {
 	NIM,
 	FPGA
