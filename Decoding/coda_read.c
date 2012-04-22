@@ -87,6 +87,8 @@ optimCounter 	= 1;
 row_count	= 0;
 
 // I MADE BIG CHANGES, AND NOTHING HURT
+// Okay, now things hurt.
+
 
 fileNameBak = malloc(10 * sizeof (*fileNameBak));
 fileName = malloc(10 * sizeof (*fileName));
