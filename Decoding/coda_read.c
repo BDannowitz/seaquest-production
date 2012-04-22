@@ -2576,7 +2576,10 @@ int make_tdc_query(MYSQL* conn){
 	sprintf(outputFileName,".tdc.%i.temp", pid);
         
         printf("I Made a change here!");
+        // Cool, yeah?
 	
+        // 4 SCORE N 7 YEARS
+        
 	// Open the temp file 
 	if (file_exists(outputFileName)) remove(outputFileName);
 	fp = fopen(outputFileName,"w");
