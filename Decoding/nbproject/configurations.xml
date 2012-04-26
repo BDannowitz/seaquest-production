@@ -28,7 +28,7 @@
           <buildCommandWorkingDir>.</buildCommandWorkingDir>
           <buildCommand>${MAKE} -f Makefile</buildCommand>
           <cleanCommand>${MAKE} -f Makefile clean</cleanCommand>
-          <executablePath></executablePath>
+          <executablePath>decoda</executablePath>
           <cTool>
             <incDir>
               <pElem>/usr/include/mysql</pElem>

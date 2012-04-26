@@ -35,7 +35,7 @@ double goEventTime, endEventTime, stopCountTime;
 unsigned int codaEventNum;
 int eventType, evLength, evNum; 
 unsigned short int triggerBits, dataQuality;
-unsigned short int codaEvVmeTime;
+unsigned int codaEvVmeTime;
 unsigned int eventNum;
 
 // Counters
@@ -70,7 +70,8 @@ int latchBoardID[5000], latchChannelID[5000];
 int latchCount;
 
 // Spill Values
-unsigned short int spillID, spillVmeTime;
+unsigned short int spillID;
+unsigned int spillVmeTime;
 unsigned char spillType;
 
 // Scaler Values
