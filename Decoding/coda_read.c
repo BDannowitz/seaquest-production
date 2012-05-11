@@ -2576,6 +2576,8 @@ int make_tdc_query(MYSQL* conn){
 	
 	beginTDCfile = clock();
 
+        // TEST !
+        
 	// This method prints the data out to file and then uploads directly via LOAD DATA INFILE
 	pid = getpid();
 
