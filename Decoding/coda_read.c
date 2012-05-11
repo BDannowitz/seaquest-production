@@ -2583,7 +2583,7 @@ int make_tdc_query(MYSQL* conn){
         
         // Open the temp file 
 	if (file_exists(outputFileName)) remove(outputFileName);
-        mkfifo(outputFileName, S_IWUSR | S_IRUSR | S_IRGRP | S_IROTH);
+        
 	fp = fopen(outputFileName,"w");
 
 	if (fp == NULL) {
@@ -2594,52 +2594,12 @@ int make_tdc_query(MYSQL* conn){
 	}
         
         sprintf(qryString,"LOAD DATA LOCAL INFILE '%s' INTO TABLE tempHit", outputFileName);
-        
-        pid = fork ();
-        if (pid == (pid_t) 0)
-            {
-            /* This is the child process.  */
-            // Initialize MySQL database connection
-            conn2 = mysql_init(NULL);
-
-            // Must set this option for the C API to allow loading data from
-            // 	local file (like we do for slow control events)
-            mysql_options(conn2, MYSQL_OPT_LOCAL_INFILE, NULL);
-
-            // Connect to the MySQL database
-            if (!mysql_real_connect(conn2, server, user, password, database, 
-                    PORT, UNIX_SOCKET, CLIENT_FLAG)) {
-                    printf("Database Connection ERROR: %s\n\n", mysql_error(conn2));
-                    return 1;
-            } else {
-                    printf("Database connection: Success\n\n");
-            }
-            
-            // Submit the query to the server	
-            if(mysql_query(conn2, qryString))
-            {
-                    printf("%s\n", qryString);
-                    printf("Load Hit Data Error: %s\n", mysql_error(conn2));
-                    return 1;
-            }
-            mysql_close(conn2);
-            return 1;
-            }
-        else if (pid < (pid_t) 0)
-            {
-            /* The fork failed.  */
-            fprintf (stderr, "Fork failed.\n");
-            return EXIT_FAILURE;
-            }
-        else
-            {
-            /* This is the parent process.  */
-            for(k=0;k<tdcCount;k++){
+                
+        for(k=0;k<tdcCount;k++){
 		fprintf(fp, "%i\t%i\t%i\t%i\t%i\t%i\t\\N\t\\N\t%f\t0\t\\N\t\\N\n", tdcRunID[k], tdcSpillID[k],
 			tdcCodaID[k], tdcROC[k], tdcBoardID[k], tdcChannelID[k], tdcStopTime[k]);
-            }
         }
-
+        
 	// File MUST be closed before it can be loaded into MySQL
 	fclose(fp);
 
@@ -2649,6 +2609,15 @@ int make_tdc_query(MYSQL* conn){
 	beginTDCload = clock();
 	beginTimeTDCload = time(NULL);
 
+        // Submit the query to the server	
+            if(mysql_query(conn, qryString))
+            {
+                    printf("%s\n", qryString);
+                    printf("Load Hit Data Error: %s\n", mysql_error(conn2));
+                    return 1;
+            }
+        
+        
 	endTDCload = clock();
 	endTimeTDCload = time(NULL);
         totalTDCload += ((double)( endTDCload - beginTDCload ) / (double)CLOCKS_PER_SEC);
