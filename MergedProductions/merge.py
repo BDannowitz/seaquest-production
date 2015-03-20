@@ -860,7 +860,8 @@ def main():
                     return 1
         # This is all we came to do. Exiting...
         return 0
-
+    
+    print 'Making tables'
     for merged_production in merged_productions:
         for server in server_dict:
             if make_dest_tables(server, merged_production):
@@ -919,6 +920,7 @@ def main():
     #   verify they're tracked, and merge them
     if arguments['<production>']:
         for prod in arguments['<production>']:
+            print 'Merging production ' + prod
             prod_dict = get_production_details(prod, arguments['--jtracked'], arguments['--ktracked'])
             if len(prod_dict) == 0:
                 print 'Production ' + prod + ' either cannot be found or does not match jtracked=' + \
