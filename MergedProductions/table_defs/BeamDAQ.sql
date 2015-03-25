@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS `BeamDAQ` (
   `Inh_thres` int(11) NOT NULL,
   `QIE_busy_delay` int(11) NOT NULL,
   `Marker_delay` int(11) NOT NULL,
-  `QIE_phase_adjust` int(11) NOT NULL
+  `QIE_phase_adjust` int(11) NOT NULL,
+  KEY `spillID` (`spillID`) USING BTREE,
+  KEY `NM3ION` (`NM3ION`) USING BTREE
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

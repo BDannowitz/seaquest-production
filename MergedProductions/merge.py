@@ -16,39 +16,39 @@ Usage:
   merge.py --version
 
 Options:
-  -h --help               Show this screen.
-  --version               Show version.
-  --all                   Merge all productions from all servers.
-  <production>...         One (or more) production names
-  --roadset=<roadset>     Merge only a specific roadset.
-  --range <minrunID> <maxrunID>     Merge a range of runs
-  --suffix=<suffix>       Merged production schema name suffix.
-                          Resulting schemas will be like:
-                          merged_roadsetROADSET_SUFFIX
-                          where ROADSET is determined by run
-                          number.
-  clear                   Delete the listed productions from the merged
-                          productions defined by the <suffix> argument
-  --overwrite             Clear any previously existing data before
-                          merging a production.
-  --passive               Skip merging a production if data is
-                          found to exist previously.
-  --server=<server>       Merge only productions from a specific
-                          server. Useful when doing parallel merging.
-  set-keys                Used only to turn indexes for <suffix> productions
-                          on and off.
-  --disable-keys=<bool>   Disable/Enable the indexes of all merged
-                          production merging process. May be disruptive to
-                          ongoing analysis.
-                          [Default: 0]
-  --jtracked=<bool>       Merge productions that have SQERP tracking
-                          results. If you define one of these, you must
-                          define both. Setting one to 0 tightens the
-                          selection. [Default: 1]
-  --ktracked=<bool>       Merge productions that have kTracker
-                          tracking results. If you define one of these,
-                          you must define both. Setting one to 0 tightens
-                          the selection.[Default: 1]
+  -h --help                      Show this screen.
+  --version                      Show version.
+  --all                          Merge all productions from all servers.
+  <production>...                One (or more) production names
+  --roadset=<roadset>            Merge only a specific roadset.
+  --range <minrunID> <maxrunID>  Merge a range of runs
+  --suffix=<suffix>              Merged production schema name suffix.
+                                 Resulting schemas will be like:
+                                 merged_roadsetROADSET_SUFFIX
+                                 where ROADSET is determined by run
+                                 number.
+  clear                          Delete the listed productions from the merged
+                                 productions defined by the <suffix> argument
+  --overwrite                    Clear any previously existing data before
+                                 merging a production.
+  --passive                      Skip merging a production if data is
+                                 found to exist previously.
+  --server=<server>              Merge only productions from a specific
+                                 server. Useful when doing parallel merging.
+  set-keys                       Used only to turn indexes for <suffix> productions
+                                 on and off.
+  --disable-keys=<bool>          Disable/Enable the indexes of all merged
+                                 production merging process. May be disruptive to
+                                 ongoing analysis.
+                                 [Default: 0]
+  --jtracked=<bool>              Merge productions that have SQERP tracking
+                                 results. If you define one of these, you must
+                                 define both. Setting one to 0 tightens the
+                                 selection. [Default: 1]
+  --ktracked=<bool>              Merge productions that have kTracker
+                                 tracking results. If you define one of these,
+                                 you must define both. Setting one to 0 tightens
+                                 the selection.[Default: 1]
 """
 
 import sys

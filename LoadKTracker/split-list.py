@@ -22,7 +22,7 @@ def split_file(input_file, n_files):
         output_file = '%s%.02d.txt' % (output_file_base, file_number)
         f = open(output_file, 'w')
         if (file_number*lines_per_file + lines_per_file >= length) and (file_number*lines_per_file < length):
-            for index in range(int(file_number*lines_per_file),int(length-1)):
+            for index in range(int(file_number*lines_per_file),int(length)):
                 f.write(str(run_list[index]) + '\n')
         elif (file_number*lines_per_file + lines_per_file < length) and (file_number*lines_per_file < length):
             for index in range(int(file_number*lines_per_file),int(file_number*lines_per_file + lines_per_file)):

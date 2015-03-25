@@ -46,9 +46,9 @@ CREATE TABLE IF NOT EXISTS `Event` (
   `AfterInhMATRIX5` int(11) DEFAULT '0',
   `dataQuality` mediumint(8) unsigned DEFAULT '0',
   `vmeTime` int(8) unsigned NOT NULL,
+  PRIMARY KEY (`runID`, `eventID`),
   KEY `spillID` (`spillID`) USING BTREE,
-  KEY `eventID` (`eventID`) USING BTREE,
-  KEY `run_event` (`runID`,`eventID`)
+  KEY `eventID` (`eventID`) USING BTREE
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
