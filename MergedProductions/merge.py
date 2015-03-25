@@ -11,7 +11,8 @@ Usage:
            [--disable-keys=<bool>]
            [(--jtracked=<bool> --ktracked=<bool>)]
   merge.py clear <production>... --suffix=<suffix>
-  merge.py set-keys (on|off) --suffix=<suffix>
+  merge.py set-keys (on|off) --suffix=<suffix> [--server=<server>]
+  merge.py optimize --suffix=<suffix> [--server=<server>]
   merge.py -h | --help
   merge.py --version
 
@@ -708,6 +709,36 @@ def set_keys(server, production, key_flag):
     return 0
 
 
+def optimize(server, production):
+
+    if schema_exists(server, production):
+
+        try:
+            db = mdb.connect(read_default_file='../.my.cnf', read_default_group='production',
+                             host=server, port=server_dict[server]['port'], db=production)
+            cur = db.cursor()
+
+            cur.execute('SHOW TABLES')
+            tables = cur.fetchall()
+            query = 'OPTIMIZE TABLE '
+            for table in tables:
+                query += table[0] + ', '
+
+            query = query[:-2]
+            cur.execute(query)
+
+            db.close()
+
+            return 0
+
+        except mdb.Error, e:
+
+            print "Error %d: %s" % (e.args[0], e.args[1])
+            return 1
+
+    return 0
+
+
 def run_exists(runID, production):
     """
     Looks at the 'production' table in the specified production on each server to see if the run already exists there
@@ -852,12 +883,26 @@ def main():
     if arguments['set-keys']:
         key_flag = 1 if arguments['on'] else 0
         for server in server_dict:
-            for merged_production in merged_productions:
-                print 'Setting keys in ' + merged_production + ' on ' + server
-                if set_keys(server, merged_production, key_flag):
-                    print 'Error setting keys in ' + merged_production + ' on ' + server
-                    print 'You might want to check and see if you should manually re-enable all keys...'
-                    return 1
+            if (arguments['--server'] and server == arguments['--server']) or arguments['--server'] == None:
+                for merged_production in merged_productions:
+                    print 'Setting keys in ' + merged_production + ' on ' + server
+                    if set_keys(server, merged_production, key_flag):
+                        print 'Error setting keys in ' + merged_production + ' on ' + server
+                        print 'You might want to check and see if you should manually re-enable all keys...'
+                        return 1
+        # This is all we came to do. Exiting...
+        return 0
+    
+    # Here, we just want to optimize the indexes
+    if arguments['optimize']:
+        for server in server_dict:
+            if (arguments['--server'] and server == arguments['--server']) or arguments['--server'] == None:
+                for merged_production in merged_productions:
+                    print 'Setting keys in ' + merged_production + ' on ' + server
+                    if optimize(server, merged_production):
+                        print 'Error optimizing tables in ' + merged_production + ' on ' + server
+                        print 'You might want to check and see if you should manually optimize...'
+                        return 1
         # This is all we came to do. Exiting...
         return 0
     
