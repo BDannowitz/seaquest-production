@@ -79,7 +79,7 @@ has_spillID = ['Spill', 'Event', 'BeamDAQ', 'Beam', 'Target', 'QIE', 'Scaler']
 no_spillID = ['Run']
 
 # Only merge data that (1) has a kInfo table, and (2) that kInfo table has this value in it
-kInfo_value = 'r1.2.0'
+kInfo_value = 'r1.4.0'
 
 
 def schema_exists(server, schema):
