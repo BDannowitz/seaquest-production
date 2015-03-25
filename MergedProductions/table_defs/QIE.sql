@@ -65,8 +65,7 @@ CREATE TABLE `QIE` (
   `RF+16` mediumint(9) NOT NULL,
   KEY `spillID` (`spillID`,`eventID`) USING BTREE,
   KEY `runID` (`runID`,`eventID`) USING BTREE,
-  KEY `RF00` (`RF+00`) USING BTREE,
-  KEY `rocID` (`rocID`,`boardID`) USING BTREE
+  KEY `RF00` (`RF+00`) USING BTREE
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;

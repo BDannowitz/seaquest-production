@@ -60,7 +60,6 @@ CREATE TABLE IF NOT EXISTS `kTrack` (
   `tx_PT` double DEFAULT NULL,
   `ty_PT` double DEFAULT NULL,
   PRIMARY KEY (`runID`,`trackID`),
-  KEY `charge` (`charge`),
   KEY `runeventID` (`runID`,`eventID`),
   KEY `spilleventID` (`spillID`,`eventID`),
   KEY `spill_track` (`spillID`,`trackID`)
