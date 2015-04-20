@@ -3,7 +3,7 @@
 """ Find-Missing. 
     
     Usage:
-        find-missing-prods.py --file=<file>
+        find-missing-prods.py --file=<file> --server=<server> --prod=<prod>
         find-missing-prods.py -h | --help
         find-missing-prods.py --version
 
@@ -171,7 +171,8 @@ def main():
             missing_count += 1
     print str(missing_count) + ' total missing productions'
 
-    print missing_run_list
+    for run in missing_run_list:
+        print run
 
     missing_run_dict = find_server(missing_run_list)
 
@@ -217,5 +218,6 @@ def find_missing_prods():
 
 
 if __name__ == "__main__":
-    find_missing_prods()
+    # find_missing_prods()
+    main()
 

@@ -23,7 +23,7 @@ def find_server(run_list):
     """
 
     server_dict = servers.server_dict
-    prod_dict = productions.get_productions()
+    prod_dict = productions.get_productions(revision="R000")
 
     found_run_dict = {}
 
@@ -33,7 +33,7 @@ def find_server(run_list):
     found_run_dict['NoMatch'] = []
 
     for run in run_list:
-        production = "run_" + run + "_R004"
+        production = "run_" + run + "_R000"
         found = False 
 
         for server in server_dict:
@@ -145,8 +145,8 @@ def main(filename):
         if server != "NoMatch":
             for run in found_runs:
                 if table_exists(server, server_dict[server]['port'], run, 'kInfo') and check_kinfo(server, server_dict[server]['port'], run):
-                    # print 'Updating entry for:', run, 'on', server
-                    # update_decoderinfo(run, server, server_dict[server]['port'])
+                    print 'Updating entry for:', run, 'on', server
+                    update_decoderinfo(run, server, server_dict[server]['port'])
                     pass
                 else:
                     print 'Could not find kInfo in ' + run + ' on ' + server
