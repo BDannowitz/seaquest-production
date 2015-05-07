@@ -67,23 +67,22 @@ from docopt import docopt
 base_tables = ['Run', 'Spill', 'Event', 'BeamDAQ', 'Beam', 'Target', 'QIE', 'Scaler']
 k_tables = ['kTrack', 'kTrackMix', 'kTrackMM', 'kTrackPP', 'kDimuon', 'kDimuonMix', 'kDimuonMM', 'kDimuonPP']
 j_tables = ['jTrack', 'jDimuon']
-all_tbls = base_tables + k_tables + j_tables
+all_tables = base_tables + k_tables + j_tables
 
 # Clearing these tables will use the runID.
 clear_with_runID = ['Run', 'Spill', 'Event', 'Beam', 'Target', 'QIE',
-                            'jTrack', 'jDimuon', 'kTrack', 'kDimuon', 'kTrackMix', 'kTrackMM',
-                                                'kTrackPP', 'kDimuonMix', 'kDimuonMM', 'kDimuonPP']
+                    'jTrack', 'jDimuon', 'kTrack', 'kDimuon', 'kTrackMix', 'kTrackMM', 
+                    'kTrackPP', 'kDimuonMix', 'kDimuonMM', 'kDimuonPP']
 # All other tables will be cleared with spillID
 clear_with_spillID = ['BeamDAQ', 'Scaler']
 
 # When dumping, we exclude spillID=0, so we need a list of base tables (not track) that have spillID field
 has_spillID = ['Spill', 'Event', 'BeamDAQ', 'Beam', 'Target', 'QIE', 'Scaler', 'kTrack', 'kDimuon', 
-                       'kTrackMM', 'kTrackPP', 'kDimuonMM', 'kDimuonPP', 'jTrack', 'jDimuon']
+               'kTrackMM', 'kTrackPP', 'kDimuonMM', 'kDimuonPP', 'jTrack', 'jDimuon']
 no_spillID = ['Run', 'kTrackMix',  'kDimuonMix']
 
 # Only merge data that (1) has a kInfo table, and (2) that kInfo table has this value in it
 kInfo_value = 'r1.4.0'
-
 
 
 def schema_exists(server, schema):
@@ -331,8 +330,8 @@ def dump_production(server, production_name, output_file, jtracked, ktracked):
         with open(output_file, 'a') as f:
             subprocess.check_call(cmd, stdout=f, stderr=subprocess.STDOUT, shell=True)
 
-    except subprocess.CalledProcessError as e:
-        print "mysqldump stdout output:\n", e.returncode
+    except subprocess.CalledProcessError, e:
+        print "mysqldump stdout output:\n", e.output
         return 1
 
     # Assemble the dump statement
@@ -364,8 +363,8 @@ def dump_production(server, production_name, output_file, jtracked, ktracked):
         with open(output_file, 'a') as f:
             subprocess.check_call(cmd, stdout=f, stderr=subprocess.STDOUT)
 
-    except subprocess.CalledProcessError as e:
-        print "mysqldump stdout output:\n", e.returncode
+    except subprocess.CalledProcessError, e:
+        print "mysqldump stdout output:\n", e.output
         return 1
 
     # Don't forget to throw the summary.production entry into the mix!
@@ -390,8 +389,8 @@ def dump_production(server, production_name, output_file, jtracked, ktracked):
         with open(output_file, 'a') as f:
             subprocess.check_call(cmd, stdout=f, stderr=subprocess.STDOUT, shell=True)
 
-    except subprocess.CalledProcessError as e:
-        print "mysqldump stdout output:\n", e.returncode
+    except subprocess.CalledProcessError, e:
+        print "mysqldump stdout output:\n", e.output
         return 1
 
     return 0
@@ -424,7 +423,7 @@ def make_dest_tables(server, schema):
         if create_schema(server, schema):
             print 'Error creating new merged schema ' + schema + ' on ' + server
 
-    for table in all_tbls:
+    for table in all_tables:
         if not table_exists(server, schema, table):
             try:
                 with open('table_defs/' + table + '.sql', 'r') as fd:
@@ -436,8 +435,8 @@ def make_dest_tables(server, schema):
                                       '-C',
                                       schema], stdin=fd).wait()
 
-            except subprocess.CalledProcessError as e:
-                print "mysqldump stdout output:\n", e.returncode, e.message
+            except subprocess.CalledProcessError, e:
+                print "mysqldump stdout output:\n", e.output, e.message
                 return 1
 
         if not table_exists(server, schema, 'production'):
@@ -451,8 +450,8 @@ def make_dest_tables(server, schema):
                                       '-C',
                                       schema], stdin=fd).wait()
 
-            except subprocess.CalledProcessError as e:
-                print "mysqldump stdout output:\n", e.returncode, e.message
+            except subprocess.CalledProcessError, e:
+                print "mysqldump stdout output:\n", e.output, e.message
                 return 1
 
     return 0
@@ -476,8 +475,8 @@ def load_dump(merged_production, dump_file):
                                   '-C',
                                   merged_production], stdin=fd).wait()
 
-        except subprocess.CalledProcessError as e:
-            print "mysql dump loading error:\n", e.returncode
+        except subprocess.CalledProcessError, e:
+            print "mysql dump loading error:\n", e.output
             return 1
 
     return 0
@@ -765,7 +764,9 @@ def run_exists(runID, production):
     """
 
     exists = 0
-    query = 'SELECT production FROM production WHERE run=' + str(runID)
+    query1 = 'SELECT production FROM production WHERE run=' + str(runID)
+
+    query2 = 'SELECT * FROM %s WHERE runID=' + str(runID) + ' LIMIT 1'
 
     for server in server_dict:
 
@@ -775,9 +776,13 @@ def run_exists(runID, production):
                              host=server, port=server_dict[server]['port'], db=production)
             cur = db.cursor()
 
-            cur.execute(query)
-
+            cur.execute(query1)
             exists = (exists | 1) if cur.rowcount > 0 else exists
+
+            for table in all_tables:
+                if not exists:
+                    cur.execute(query2 % table)
+                    exists = (exists | 1) if cur.rowcount > 0 else existsi
 
             db.close()
 
