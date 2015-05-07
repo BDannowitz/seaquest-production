@@ -64,20 +64,22 @@ from docopt import docopt
 
 # Here is the list of tables to merge. If you add tables, please also add them to the
 #   appropriate category lists below
-tbl_list = ['Run', 'Spill', 'Event', 'BeamDAQ', 'Beam', 'Target', 'QIE', 'Scaler']
-k_tables = ['kTrack', 'kDimuon']
+base_tables = ['Run', 'Spill', 'Event', 'BeamDAQ', 'Beam', 'Target', 'QIE', 'Scaler']
+k_tables = ['kTrack', 'kTrackMix', 'kTrackMM', 'kTrackPP', 'kDimuon', 'kDimuonMix', 'kDimuonMM', 'kDimuonPP']
 j_tables = ['jTrack', 'jDimuon']
-all_tbls = tbl_list + k_tables + j_tables
+all_tables = base_tables + k_tables + j_tables
 
 # Clearing these tables will use the runID.
 clear_with_runID = ['Run', 'Spill', 'Event', 'Beam', 'Target', 'QIE',
-                  'jTrack', 'jDimuon', 'kTrack', 'kDimuon']
+                    'jTrack', 'jDimuon', 'kTrack', 'kDimuon', 'kTrackMix', 'kTrackMM', 
+                    'kTrackPP', 'kDimuonMix', 'kDimuonMM', 'kDimuonPP']
 # All other tables will be cleared with spillID
 clear_with_spillID = ['BeamDAQ', 'Scaler']
 
 # When dumping, we exclude spillID=0, so we need a list of base tables (not track) that have spillID field
-has_spillID = ['Spill', 'Event', 'BeamDAQ', 'Beam', 'Target', 'QIE', 'Scaler']
-no_spillID = ['Run']
+has_spillID = ['Spill', 'Event', 'BeamDAQ', 'Beam', 'Target', 'QIE', 'Scaler', 'kTrack', 'kDimuon', 
+               'kTrackMM', 'kTrackPP', 'kDimuonMM', 'kDimuonPP', 'jTrack', 'jDimuon']
+no_spillID = ['Run', 'kTrackMix',  'kDimuonMix']
 
 # Only merge data that (1) has a kInfo table, and (2) that kInfo table has this value in it
 kInfo_value = 'r1.4.0'
@@ -310,14 +312,17 @@ def dump_production(server, production_name, output_file, jtracked, ktracked):
         print 'There was a problem in checking or altering the Scaler table in ' + production_name + ' on ' + server
         return 1
 
-    for table in has_spillID:
-        cmd.append(table)
+    for table in base_tables:
+        if table in has_spillID:
+            cmd.append(table)
     if ktracked:
         for table in k_tables:
-            cmd.append(table)
+            if table in has_spillID:
+                cmd.append(table)
     if jtracked:
         for table in j_tables:
-            cmd.append(table)
+            if table in has_spillID:
+                cmd.append(table)
 
     cmd = " ".join(cmd)
 
@@ -342,8 +347,17 @@ def dump_production(server, production_name, output_file, jtracked, ktracked):
            "--compress",
            production_name]
 
-    for table in no_spillID:
-        cmd.append(table)
+    for table in base_tables:
+        if table in no_spillID:
+            cmd.append(table)
+    if ktracked:
+        for table in k_tables:
+            if table in no_spillID:
+                cmd.append(table)
+    if jtracked:
+        for table in j_tables:
+            if table in no_spillID:
+                cmd.append(table)
 
     try:
         with open(output_file, 'a') as f:
@@ -409,7 +423,7 @@ def make_dest_tables(server, schema):
         if create_schema(server, schema):
             print 'Error creating new merged schema ' + schema + ' on ' + server
 
-    for table in all_tbls:
+    for table in all_tables:
         if not table_exists(server, schema, table):
             try:
                 with open('table_defs/' + table + '.sql', 'r') as fd:
@@ -750,7 +764,9 @@ def run_exists(runID, production):
     """
 
     exists = 0
-    query = 'SELECT production FROM production WHERE run=' + str(runID)
+    query1 = 'SELECT production FROM production WHERE run=' + str(runID)
+
+    query2 = 'SELECT * FROM %s WHERE runID=' + str(runID) + ' LIMIT 1'
 
     for server in server_dict:
 
@@ -760,9 +776,13 @@ def run_exists(runID, production):
                              host=server, port=server_dict[server]['port'], db=production)
             cur = db.cursor()
 
-            cur.execute(query)
-
+            cur.execute(query1)
             exists = (exists | 1) if cur.rowcount > 0 else exists
+
+            for table in all_tables:
+                if not exists:
+                    cur.execute(query2 % table)
+                    exists = (exists | 1) if cur.rowcount > 0 else existsi
 
             db.close()
 
