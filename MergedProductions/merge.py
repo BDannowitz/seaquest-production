@@ -779,7 +779,7 @@ def run_exists(runID, production):
             cur.execute(query1)
             exists = (exists | 1) if cur.rowcount > 0 else exists
 
-            for table in all_tables:
+            for table in clear_with_runID:
                 if not exists:
                     cur.execute(query2 % table)
                     exists = (exists | 1) if cur.rowcount > 0 else exists
