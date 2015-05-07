@@ -782,7 +782,7 @@ def run_exists(runID, production):
             for table in all_tables:
                 if not exists:
                     cur.execute(query2 % table)
-                    exists = (exists | 1) if cur.rowcount > 0 else existsi
+                    exists = (exists | 1) if cur.rowcount > 0 else exists
 
             db.close()
 
