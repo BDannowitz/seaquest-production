@@ -8,9 +8,10 @@ roadset_dict = {'49': {'lower': 8184, 'upper': 8896},
                 '57': {'lower': 8910, 'upper': 10420},
                 '59': {'lower': 10421, 'upper': 10912},
                 '61': {'lower': 10914, 'upper': 11028},
-                '62': {'lower': 11040, 'upper': 12522}}
+                '62': {'lower': 11272, 'upper': 12522}
+}
 
-revision_list = ['R000', 'R001', 'R003', 'R004', 'R005']
+revision_list = ['R001', 'R003', 'R004', 'R005']
 
 
 def get_productions(revision='R004', server=None, roadset=None):
