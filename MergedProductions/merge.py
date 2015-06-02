@@ -57,6 +57,8 @@ import MySQLdb as mdb
 import subprocess
 import os
 
+from spillDQ import set_spill_quality
+
 sys.path.append("../modules")
 from productions import roadset_dict
 from servers import server_dict
@@ -1005,6 +1007,11 @@ def main():
         merge_one(prods_to_merge[prod]['server'], prod, int(prods_to_merge[prod]['jtracked']),
                   int(prods_to_merge[prod]['ktracked']), arguments['--overwrite'], arguments['--suffix'])
 
+    # Set Spill table dataQuality bits
+    for server in server_dict:
+        for merged_production in merged_productions:
+            set_spill_quality(server, merged_production, merged_production[14:16])
+        
     # If you turned them off, better turn them back on!
     if arguments['--disable-keys'] == '1':
         print 'Enabling Keys. This may take a few minutes...'
