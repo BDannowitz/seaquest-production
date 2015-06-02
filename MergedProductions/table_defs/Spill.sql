@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS `Spill` (
   `beamIntensity` double unsigned DEFAULT NULL,
   `beamIntensityError` double unsigned DEFAULT NULL,
   `targetPos` tinyint(3) unsigned NOT NULL,
-  `dataQuality` mediumint(8) unsigned DEFAULT '0',
+  `dataQuality` bigint(8) unsigned DEFAULT '0',
   `BOScodaEventID` int(10) unsigned NOT NULL,
   `BOSvmeTime` int(8) unsigned NOT NULL,
   `EOScodaEventID` int(10) unsigned DEFAULT NULL,
