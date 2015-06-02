@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS `production` (
   `kTrackStart` timestamp NULL DEFAULT NULL,
   `kTrackEnd` timestamp NULL DEFAULT NULL,
   `ktracked` tinyint(2) DEFAULT NULL,
-  `subrevision` tinyint(4) DEFAULT NULL
+  `subrevision` tinyint(4) DEFAULT NULL,
+  KEY `run` (`run`) USING BTREE
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

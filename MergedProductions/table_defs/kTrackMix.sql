@@ -37,7 +37,6 @@ CREATE TABLE `kTrackMix` (
   `pz3` double DEFAULT NULL,
   `tx_PT` double DEFAULT NULL,
   `ty_PT` double DEFAULT NULL,
-  PRIMARY KEY (`runID`,`eventID`,`trackID`),
-  KEY `eventID` (`eventID`)
+  PRIMARY KEY (`runID`,`eventID`,`trackID`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 

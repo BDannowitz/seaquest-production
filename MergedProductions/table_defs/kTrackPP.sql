@@ -39,7 +39,6 @@ CREATE TABLE `kTrackPP` (
   `tx_PT` double DEFAULT NULL,
   `ty_PT` double DEFAULT NULL,
   PRIMARY KEY (`runID`,`eventID`,`trackID`),
-  KEY `eventID` (`eventID`),
   KEY `spillID` (`spillID`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 

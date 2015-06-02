@@ -26,6 +26,7 @@ CREATE TABLE `kDimuonMix` (
   `isTarget` int(11) DEFAULT NULL,
   `isDump` int(11) DEFAULT NULL,
   PRIMARY KEY (`runID`,`eventID`,`dimuonID`),
-  KEY `eventID` (`eventID`)
+  KEY (`runID`,`eventID`,`negTrackID`) USING BTREE,
+  KEY (`runID`,`eventID`,`posTrackID`) USING BTREE
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 

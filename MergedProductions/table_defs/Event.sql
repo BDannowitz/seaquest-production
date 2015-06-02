@@ -1,9 +1,3 @@
--- MySQL dump 10.13  Distrib 5.5.41, for debian-linux-gnu (x86_64)
---
--- Host: e906-db3.fnal.gov    Database: merged_roadset57_R004
--- ------------------------------------------------------
--- Server version	5.1.73
-
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
@@ -47,8 +41,7 @@ CREATE TABLE IF NOT EXISTS `Event` (
   `dataQuality` mediumint(8) unsigned DEFAULT '0',
   `vmeTime` int(8) unsigned NOT NULL,
   PRIMARY KEY (`runID`, `eventID`),
-  KEY `spillID` (`spillID`) USING BTREE,
-  KEY `eventID` (`eventID`) USING BTREE
+  KEY `spillevent` (`spillID`,`eventID`) USING BTREE
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

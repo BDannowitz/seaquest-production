@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS `Spill` (
   `time` datetime DEFAULT NULL,
   KEY `runID` (`runID`) USING BTREE,
   KEY `spillID` (`spillID`) USING BTREE,
-  KEY `targetPos` (`targetPos`) USING BTREE
+  KEY `targetPos` (`targetPos`) USING BTREE,
+  KEY `dataQuality` (`dataQuality`) USING BTREE
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

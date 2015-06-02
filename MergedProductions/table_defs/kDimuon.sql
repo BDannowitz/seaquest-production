@@ -26,8 +26,11 @@ CREATE TABLE `kDimuon` (
   `isValid` int(11) DEFAULT NULL,
   `isTarget` int(11) DEFAULT NULL,
   `isDump` int(11) DEFAULT NULL,
-  PRIMARY KEY (`runID`,`dimuonID`,`eventID`),
-  KEY `eventID` (`eventID`),
-  KEY `spillID` (`spillID`)
+  PRIMARY KEY (`runID`,`dimuonID`),
+  KEY `spilldimuon` (`spillID`, `dimuonID`),
+  KEY `runeventID` (`runID`,`eventID`),
+  KEY `spilleventID` (`spillID`,`eventID`),
+  KEY `spill_postrack` (`spillID`,`posTrackID`),
+  KEY `spill_negtrack` (`spillID`,`negTrackID`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 

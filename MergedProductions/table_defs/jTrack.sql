@@ -56,10 +56,9 @@ CREATE TABLE IF NOT EXISTS `jTrack` (
   `ninetyPercentTarg` tinyint(4) DEFAULT NULL,
   `ninetyPercentDump` tinyint(4) DEFAULT NULL,
   PRIMARY KEY `runID` (`runID`,`trackID`),
-  KEY `charge` (`charge`),
+  KEY `spill_track` (`spillID`,`trackID`),
   KEY `runeventID` (`runID`,`eventID`),
-  KEY `spilleventID` (`spillID`,`eventID`),
-  KEY `spill_track` (`spillID`,`trackID`)
+  KEY `spilleventID` (`spillID`,`eventID`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
