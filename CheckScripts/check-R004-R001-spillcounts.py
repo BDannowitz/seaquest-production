@@ -6,7 +6,7 @@ import MySQLdb.cursors
 MY_HOST = "e906-db1.fnal.gov"
 MY_PORT = 3306
 MY_USER = "production"
-MY_PASS = "***REMOVED***"
+MY_PASS = "**REMOVED**"
 
 ###
 # Objective:

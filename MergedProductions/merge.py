@@ -278,7 +278,7 @@ def check_scaler(server, production):
 def dump_production(server, production_name, output_file, jtracked, ktracked):
 
     db_user = 'production'
-    db_pass = '***REMOVED***'
+    db_pass = '**REMOVED**' 
 
     runID = production_name[4:10]
     jtracked = int(jtracked) if isinstance(jtracked, basestring) else jtracked
@@ -419,7 +419,7 @@ def create_schema(server, schema):
 
 def make_dest_tables(server, schema):
     db_user = 'production'
-    db_pass = '***REMOVED***'
+    db_pass = '**REMOVED**'
 
     if not schema_exists(server, schema):
         if create_schema(server, schema):
@@ -462,7 +462,7 @@ def make_dest_tables(server, schema):
 def load_dump(merged_production, dump_file):
 
     db_user = 'production'
-    db_pass = '***REMOVED***'
+    db_pass = '**REMOVED**'
 
     for server in server_dict:
         try:
